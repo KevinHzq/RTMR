@@ -68,6 +68,16 @@
 #'   Covariate values must be complete (no `NA`).
 #' @param boundary An sf object with the study area polygon(s). All layers
 #'   must share a projected CRS.
+#' @param exclude Optional sf or sfc polygon layer of areas where the
+#'   outcome cannot occur (water bodies, restricted land). Grid cells lying
+#'   entirely within it are removed before modeling (see [create_grid()]):
+#'   they are structural zeros, and excluding them restricts the analysis
+#'   and the risk map to places where events are possible, so the remaining
+#'   zero cells are ordinary sampling zeros. Cells only partially covered
+#'   are kept. A warning is issued if outcome (or denominator) events fall
+#'   inside the excluded area — either the mask is too aggressive or the
+#'   event coordinates are wrong; events in fully excluded cells are
+#'   dropped from the analysis.
 #' @param cell_size Grid cell size in CRS units. RTMDx recommends half the
 #'   block length.
 #' @param block_length Average block length in CRS units.
@@ -109,6 +119,7 @@
 rtm <- function(outcome, factors, boundary,
                 cell_size, block_length,
                 offset = NULL,
+                exclude = NULL,
                 covariates = NULL,
                 operation = c("proximity", "density", "both"),
                 max_blocks = 3,
@@ -131,8 +142,24 @@ rtm <- function(outcome, factors, boundary,
 
   # 1. grid and outcome counts
   say("Creating grid and counting outcome events...")
-  grid <- create_grid(boundary, cellsize = cell_size, ...)
+  grid <- create_grid(boundary, cellsize = cell_size, exclude = exclude, ...)
   outcome_count <- count_points(outcome, grid)
+
+  if (!is.null(exclude)) {
+    excl_geom <- sf::st_union(sf::st_geometry(exclude))
+    n_masked <- sum(lengths(sf::st_intersects(sf::st_geometry(outcome), excl_geom)) > 0)
+    if (!is.null(offset) && inherits(offset, c("sf", "sfc"))) {
+      n_masked <- n_masked +
+        sum(lengths(sf::st_intersects(sf::st_geometry(offset), excl_geom)) > 0)
+    }
+    if (n_masked > 0) {
+      warning(
+        n_masked, " event(s) fall inside the excluded area; check the ",
+        "event coordinates or the `exclude` mask (events in fully ",
+        "excluded cells are dropped from the analysis)"
+      )
+    }
+  }
 
   # optional denominator: cells with zero denominator have an undefined rate
   # and are excluded from fitting

@@ -11,6 +11,7 @@ rtm(
   cell_size,
   block_length,
   offset = NULL,
+  exclude = NULL,
   covariates = NULL,
   operation = c("proximity", "density", "both"),
   max_blocks = 3,
@@ -52,6 +53,17 @@ ratios) and \code{relrisk} becomes the relative rate multiplier surface.
 Cells with a zero denominator are excluded from model fitting (their
 rate is undefined), but \code{relrisk} is still computed for them from their
 risk factor exposures.}
+
+\item{exclude}{Optional sf or sfc polygon layer of areas where the
+outcome cannot occur (water bodies, restricted land). Grid cells lying
+entirely within it are removed before modeling (see \code{\link[=create_grid]{create_grid()}}):
+they are structural zeros, and excluding them restricts the analysis
+and the risk map to places where events are possible, so the remaining
+zero cells are ordinary sampling zeros. Cells only partially covered
+are kept. A warning is issued if outcome (or denominator) events fall
+inside the excluded area — either the mask is too aggressive or the
+event coordinates are wrong; events in fully excluded cells are
+dropped from the analysis.}
 
 \item{covariates}{Optional named list of pre-computed cell-level
 covariates (e.g. raster values aggregated to the grid). Each element

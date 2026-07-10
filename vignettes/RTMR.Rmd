@@ -97,6 +97,21 @@ factors = list(
 )
 ```
 
+### Masking places where events cannot occur
+
+Most grid cells have zero events, and that is usually fine: Heffner (2013) shows the zero share expected under a Poisson process matches what typical data produce. But zeros of a different kind — *structural* zeros, cells where events are impossible (water bodies, an airfield, unpopulated industrial land) — do not belong in the model at all: they dilute the fit with places that carry no information about risk. Rather than absorbing them statistically (zero-inflated models), exclude them:
+
+```{r exclude}
+lake <- st_sfc(st_polygon(list(rbind(
+  c(2000, 2000), c(2800, 2000), c(2800, 2800), c(2000, 2800), c(2000, 2000)
+))), crs = 32610)
+
+nrow(create_grid(boundary, cellsize = 150))
+nrow(create_grid(boundary, cellsize = 150, exclude = lake))
+```
+
+Passing the same layer as `rtm(..., exclude = lake)` removes cells lying *entirely* within the mask from the analysis and the risk map, restricting the estimand to places where events can occur; the remaining zeros are ordinary sampling zeros. Cells only partially covered are kept, since events can still occur in their uncovered part, and a warning is issued if any outcome or denominator events fall inside the mask — a sign of either an over-aggressive mask or bad event coordinates.
+
 Pre-computed cell-level variables (e.g. raster values aggregated to the grid) enter through `covariates`, with an explicit role. A `"candidate"` competes for selection like any risk factor and is reported with an RRV — binary 0/1 values are recommended so the RRV reads as an exposed/unexposed rate ratio. An `"adjustment"` is a confounder held constant: it is included in every candidate model, unpenalized in the culling step, allowed either coefficient sign, and reported separately from the RRV table — continuous values are fine (and preferable) there, and categorical values (factor or character, e.g. a land-use class per cell) are dummy-coded against a `reference` level of your choice, each level's coefficient being the adjusted log rate ratio versus the reference.
 
 ```{r covariates, eval = FALSE}

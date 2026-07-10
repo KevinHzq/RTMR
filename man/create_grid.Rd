@@ -4,7 +4,7 @@
 \alias{create_grid}
 \title{Create an analysis grid over a study area}
 \usage{
-create_grid(x, ..., clip = TRUE)
+create_grid(x, ..., clip = TRUE, exclude = NULL)
 }
 \arguments{
 \item{x}{An sf object with the study area polygon(s).}
@@ -14,6 +14,9 @@ create_grid(x, ..., clip = TRUE)
 
 \item{clip}{If \code{TRUE} (default), keep only cells intersecting the study
 area. If \code{FALSE}, return the full bounding-box grid.}
+
+\item{exclude}{Optional sf or sfc polygon layer of areas to exclude;
+cells fully covered by it are removed.}
 }
 \value{
 An sf object with a \code{cell_id} column and polygon geometry.
@@ -22,6 +25,16 @@ An sf object with a \code{cell_id} column and polygon geometry.
 Builds a regular grid of cells (the units of analysis) covering the study
 area. Cells are kept if they have at least some overlap with the study
 area polygon, mirroring the masking behaviour of the RTMDx Utility.
+}
+\details{
+Areas where the outcome cannot occur (water bodies, restricted land)
+can be removed with \code{exclude}: cells lying \emph{entirely} within the
+exclusion polygons are dropped. Such cells are structural zeros — they
+would otherwise dilute the model with places that carry no information
+about risk — and removing them restricts the analysis (and the risk
+map) to places where events are possible. Cells only partially covered
+by the exclusion are kept, since events can still occur in their
+uncovered part.
 }
 \examples{
 nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
