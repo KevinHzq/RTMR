@@ -16,6 +16,10 @@ compute_proximity <- function(pt, grid) {
   grid_centroid <- suppressWarnings(sf::st_centroid(sf::st_geometry(grid)))
   pt_geom <- sf::st_geometry(pt)
 
+  if (length(pt_geom) == 0) {
+    stop("the feature layer is empty; nothing to measure distance to")
+  }
+
   nearest_pt <- sf::st_nearest_feature(grid_centroid, pt_geom)
 
   as.numeric(sf::st_distance(grid_centroid, pt_geom[nearest_pt], by_element = TRUE))

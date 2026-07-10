@@ -12,6 +12,25 @@ test_that("binarize_density flags cells 2 sd above the mean", {
   expect_equal(which(binarize_density(x) == 1), 100L)
 })
 
+test_that("binarize_density returns all zeros for a constant density surface", {
+  expect_equal(binarize_density(rep(0, 10)), integer(10))
+  expect_equal(binarize_density(rep(5, 10)), integer(10))
+  # single value: sd is NA, still no high-density cell
+  expect_equal(binarize_density(3), 0L)
+})
+
+test_that("empty factor layers are rejected with a clear error", {
+  d <- synthetic_rtm_data()
+  grid <- create_grid(d$boundary, cellsize = 300)
+  empty <- sf::st_sfc(crs = 32610)
+
+  expect_error(
+    operationalize(empty, grid, "ghost", block_length = 300),
+    "`ghost` has no features"
+  )
+  expect_error(compute_proximity(empty, grid), "empty")
+})
+
 test_that("operationalize builds labelled binary variables with metadata", {
   d <- synthetic_rtm_data()
   grid <- create_grid(d$boundary, cellsize = 300)

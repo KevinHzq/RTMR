@@ -80,6 +80,19 @@ test_that("rtm accepts a numeric per-cell offset", {
     ),
     "one value per grid cell"
   )
+
+  # missing values error clearly instead of failing inside the sign check
+  pop_na <- pop
+  pop_na[1] <- NA
+  expect_error(
+    rtm(
+      outcome = d$fatal_events, offset = pop_na,
+      factors = list(naloxone = d$naloxone),
+      boundary = d$boundary, cell_size = 150, block_length = 300,
+      verbose = FALSE
+    ),
+    "missing values"
+  )
 })
 
 test_that("models without an offset are unchanged", {

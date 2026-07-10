@@ -145,6 +145,9 @@ rtm <- function(outcome, factors, boundary,
     if (length(offset_count) != nrow(grid)) {
       stop("`offset` must have one value per grid cell (", nrow(grid), " cells)")
     }
+    if (anyNA(offset_count)) {
+      stop("`offset` contains missing values; fill or drop them before modeling")
+    }
     if (any(offset_count < 0) || all(offset_count == 0)) {
       stop("`offset` counts must be non-negative and not all zero")
     }
@@ -196,6 +199,12 @@ rtm <- function(outcome, factors, boundary,
     if (is.null(names(covariates)) || any(!nzchar(names(covariates)))) {
       stop("`covariates` must be a named list")
     }
+    if (anyDuplicated(names(covariates))) {
+      stop(
+        "duplicated covariate name(s): ",
+        paste(unique(names(covariates)[duplicated(names(covariates))]), collapse = ", ")
+      )
+    }
     for (nm in names(covariates)) {
       spec <- covariates[[nm]]
       if (!is.list(spec) || is.null(spec$values) || is.null(spec$role)) {
@@ -223,6 +232,9 @@ rtm <- function(outcome, factors, boundary,
         warning("`reference` for covariate `", nm, "` is ignored: it only applies to categorical values")
       }
       v <- make.names(nm)
+      if (v %in% c("outcome_count", ".log_offset")) {
+        stop("covariate name `", nm, "` is reserved; rename it")
+      }
       if (role == "candidate") {
         if (categorical) {
           stop(
@@ -278,6 +290,24 @@ rtm <- function(outcome, factors, boundary,
         )
         adjust <- adjust[!adj_constant]
         if (ncol(adjust) == 0) adjust <- NULL
+      }
+    }
+    # a covariate name colliding with an existing variable would overwrite
+    # its column while `meta` gains a row, silently misaligning the two
+    if (!identical(names(x), meta$variable)) {
+      dup <- unique(meta$variable[duplicated(meta$variable)])
+      stop(
+        "duplicate variable name(s): ", paste(dup, collapse = ", "),
+        "; rename the conflicting covariate(s)"
+      )
+    }
+    if (!is.null(adjust)) {
+      clash <- intersect(names(adjust), names(x))
+      if (length(clash) > 0) {
+        stop(
+          "adjustment covariate name(s) clash with model variables: ",
+          paste(clash, collapse = ", "), "; rename the covariate(s)"
+        )
       }
     }
   }

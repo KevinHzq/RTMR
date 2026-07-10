@@ -74,6 +74,13 @@ operationalize <- function(pt, grid, name,
   increment <- match.arg(increment)
   type <- match.arg(type)
 
+  if (length(sf::st_geometry(pt)) == 0) {
+    stop(
+      "risk factor `", name, "` has no features; ",
+      "check the layer and that it shares the grid's CRS"
+    )
+  }
+
   is_point <- all(as.character(sf::st_geometry_type(pt)) %in% c("POINT", "MULTIPOINT"))
   if (!is_point && operation %in% c("density", "both")) {
     stop(

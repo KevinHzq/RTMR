@@ -42,7 +42,9 @@ compute_density <- function(pt, grid, bandwidth) {
 #'
 #' Reclassifies kernel density values into high-density (1) and other (0)
 #' cells. Following RTMDx, high-density cells are those with values at least
-#' 2 standard deviations above the mean density.
+#' 2 standard deviations above the mean density. A constant density surface
+#' (e.g. no features within reach of any cell) has no high-density cells,
+#' so all zeros are returned.
 #'
 #' @param x Numeric vector of density values, e.g. from [compute_density()].
 #' @param n_sd Number of standard deviations above the mean defining the
@@ -51,5 +53,9 @@ compute_density <- function(pt, grid, bandwidth) {
 #' @return An integer vector of 0/1 values.
 #' @export
 binarize_density <- function(x, n_sd = 2) {
-  as.integer(x >= mean(x) + n_sd * stats::sd(x))
+  s <- stats::sd(x)
+  if (is.na(s) || s == 0) {
+    return(integer(length(x)))
+  }
+  as.integer(x >= mean(x) + n_sd * s)
 }

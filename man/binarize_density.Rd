@@ -18,5 +18,7 @@ An integer vector of 0/1 values.
 \description{
 Reclassifies kernel density values into high-density (1) and other (0)
 cells. Following RTMDx, high-density cells are those with values at least
-2 standard deviations above the mean density.
+2 standard deviations above the mean density. A constant density surface
+(e.g. no features within reach of any cell) has no high-density cells,
+so all zeros are returned.
 }

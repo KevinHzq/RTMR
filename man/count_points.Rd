@@ -17,3 +17,9 @@ An integer vector of counts, one per grid cell.
 \description{
 Typically used to build the outcome variable (e.g. crime counts per cell).
 }
+\details{
+Each point is counted exactly once: a point lying on an edge shared by
+two cells is assigned to the first intersecting cell in grid order (a
+fixed half-open convention, as in raster software). Points outside the
+grid are dropped.
+}

@@ -132,6 +132,51 @@ test_that("covariate input validation and warnings", {
   )
 })
 
+test_that("covariate name collisions are refused instead of misaligning meta", {
+  d <- synthetic_covariate_data()
+  grid <- create_grid(d$boundary, cellsize = 150)
+  n <- nrow(grid)
+  z <- rep_len(0:1, n)
+
+  base_args <- list(
+    outcome = d$crimes, factors = list(bars = d$bars),
+    boundary = d$boundary, cell_size = 150, block_length = 300,
+    operation = "proximity", verbose = FALSE
+  )
+
+  # candidate named like an operationalized variable would overwrite its column
+  expect_error(
+    do.call(rtm, c(base_args, list(
+      covariates = list(bars_prox_300 = list(values = z, role = "candidate"))
+    ))),
+    "duplicate variable name"
+  )
+  # adjustment clashing with an operationalized variable
+  expect_error(
+    do.call(rtm, c(base_args, list(
+      covariates = list(bars_prox_300 = list(values = z, role = "adjustment"))
+    ))),
+    "clash with model variables"
+  )
+  # duplicated names within the covariates list itself
+  expect_error(
+    do.call(rtm, c(base_args, list(
+      covariates = list(
+        z = list(values = z, role = "candidate"),
+        z = list(values = z, role = "adjustment")
+      )
+    ))),
+    "duplicated covariate name"
+  )
+  # reserved column names
+  expect_error(
+    do.call(rtm, c(base_args, list(
+      covariates = list(outcome_count = list(values = z, role = "candidate"))
+    ))),
+    "reserved"
+  )
+})
+
 test_that("categorical adjustments are dummy-coded against the chosen reference", {
   d <- synthetic_covariate_data()
   grid <- create_grid(d$boundary, cellsize = 150)

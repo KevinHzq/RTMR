@@ -10,3 +10,6 @@ inst/doc
 
 # copyrighted RTMDx/RTM manuals - keep local only
 RTM_doc/
+
+# stray knit output
+figure/
