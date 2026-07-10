@@ -4,15 +4,30 @@ Version: 0.0.0.9000
 Authors@R: 
     person("Kevin", "Hu", , "kevin.hu@bccdc.ca", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-0254-5277"))
-Description: What the package does (one paragraph).
+Description: Replicates the major modeling functionality of the Risk Terrain
+    Modeling Diagnostics (RTMDx) Utility in R. Risk factors are
+    operationalized as binary proximity or kernel-density variables at a
+    range of spatial influences on a grid of cells, culled with a
+    cross-validated penalized Poisson regression, and selected by
+    bidirectional stepwise regression on BIC under Poisson and negative
+    binomial models. Outputs include relative risk values for the selected
+    factors and a relative risk score for each grid cell.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
 URL: https://github.com/KevinHzq/RTMR
 BugReports: https://github.com/KevinHzq/RTMR/issues
-Imports: 
-    sf
-Suggests: 
+Imports:
+    glmnet,
+    graphics,
+    MASS,
+    sf,
+    stats
+Suggests:
+    knitr,
+    rmarkdown,
+    terra,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

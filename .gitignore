@@ -4,3 +4,9 @@
 .httr-oauth
 .DS_Store
 .quarto
+inst/doc
+/doc/
+/Meta/
+
+# copyrighted RTMDx/RTM manuals - keep local only
+RTM_doc/

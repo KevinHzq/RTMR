@@ -1,0 +1,270 @@
+---
+title: "Risk terrain modeling with RTMR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Risk terrain modeling with RTMR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 5
+)
+```
+
+Risk Terrain Modeling (RTM) diagnoses which features of the environment (bars, transit stops, vacant lots, ...) are associated with where events such as crimes concentrate, estimates *how far* each feature's influence reaches, and combines the selected factors into a map of relative risk. RTMR replicates the statistical procedure of the commercial RTMDx Utility (Heffner, 2013) and extends it with rate (offset) models and holdout validation.
+
+The pipeline, in brief:
+
+1.  A grid of cells is laid over the study area; the outcome events are counted per cell.
+2.  Each risk factor is *operationalized* into candidate binary variables at a ladder of spatial influences: proximity ("within *d* of a feature") and/or density ("inside a high-concentration cluster at bandwidth *d*").
+3.  A cross-validated, sign-constrained penalized Poisson regression culls the candidates, protecting against spurious correlations from testing many variables.
+4.  Bidirectional stepwise regression by BIC selects the final factors and their optimal spatial influences, under both Poisson and negative binomial distributions; the best BIC wins. At most one variable — one operationalization at one distance — may represent each factor.
+5.  The fitted surface, rescaled to its minimum, gives each cell's relative risk score, and each factor's exponentiated coefficient is its relative risk value (RRV).
+
+```{r setup}
+library(RTMR)
+library(sf)
+```
+
+## Simulated example data
+
+We simulate a 3 km × 3 km study area with two candidate risk factors — 15 bars and 10 parks — where crimes truly cluster around bars (within about two hundred metres) and parks are irrelevant. A working CRS in metres is assumed throughout; project your own data before modeling.
+
+```{r simulate}
+set.seed(42)
+size <- 3000
+
+boundary <- st_sf(geometry = st_sfc(
+  st_polygon(list(rbind(
+    c(0, 0), c(size, 0), c(size, size), c(0, size), c(0, 0)
+  ))),
+  crs = 32610
+))
+
+rand_pts <- function(n) cbind(runif(n, 0, size), runif(n, 0, size))
+as_sfc <- function(m) st_sfc(lapply(seq_len(nrow(m)), \(i) st_point(m[i, ])), crs = 32610)
+
+bars <- rand_pts(15)
+parks <- rand_pts(10)
+
+crimes <- do.call(rbind, lapply(seq_len(nrow(bars)), function(i) {
+  n <- rpois(1, 8)
+  cbind(rnorm(n, bars[i, 1], 100), rnorm(n, bars[i, 2], 100))
+}))
+crimes <- rbind(crimes, rand_pts(30)) # background noise
+crimes <- crimes[crimes[, 1] >= 0 & crimes[, 1] <= size &
+  crimes[, 2] >= 0 & crimes[, 2] <= size, ]
+
+bars <- as_sfc(bars)
+parks <- as_sfc(parks)
+crimes <- as_sfc(crimes)
+```
+
+## Fitting a risk terrain model
+
+`rtm()` runs the whole pipeline. Two spatial parameters matter most: `block_length`, the average block length of the study area (spatial influences are tested in block increments), and `cell_size`, the grid resolution (RTMDx recommends half a block).
+
+```{r fit}
+set.seed(1)
+fit <- rtm(
+  outcome = crimes,
+  factors = list(bars = bars, parks = parks),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "both", # test proximity and density variants
+  increment = "half", # half-block distance ladder
+  verbose = FALSE
+)
+fit
+```
+
+The model recovered bars as a risk factor and estimated its spatial influence, while (usually) discarding parks or assigning it a much weaker role. Per-factor settings are supported by passing a list instead of a bare layer, e.g. `factors = list(ops = list(data = ops, type = "protective", max_blocks = 2))`.
+
+### Polygon factors and cell-level covariates
+
+Factors need not be points. Line and polygon layers (parks, transit corridors) are supported for the *proximity* operationalization — distance is measured to the nearest edge, and cells inside a polygon are always exposed. Density is a kernel density of a point pattern, so requesting it for non-point geometry is an error; assign operations per factor when mixing geometry types:
+
+```{r polygons, eval = FALSE}
+factors = list(
+  bars  = list(data = bars_pts, operation = "both"),
+  parks = list(data = park_polygons, operation = "proximity")
+)
+```
+
+Pre-computed cell-level variables (e.g. raster values aggregated to the grid) enter through `covariates`, with an explicit role. A `"candidate"` competes for selection like any risk factor and is reported with an RRV — binary 0/1 values are recommended so the RRV reads as an exposed/unexposed rate ratio. An `"adjustment"` is a confounder held constant: it is included in every candidate model, unpenalized in the culling step, allowed either coefficient sign, and reported separately from the RRV table — continuous values are fine (and preferable) there, and categorical values (factor or character, e.g. a land-use class per cell) are dummy-coded against a `reference` level of your choice, each level's coefficient being the adjusted log rate ratio versus the reference.
+
+```{r covariates, eval = FALSE}
+covariates = list(
+  greenspace  = list(values = green_bin, role = "candidate", type = "protective"),
+  deprivation = list(values = dep_index, role = "adjustment"),
+  landuse     = list(values = landuse_class, role = "adjustment", reference = "residential")
+)
+```
+
+Candidates must be directional, so a categorical covariate cannot be a candidate as-is; hypothesize a specific class with a binary indicator instead (`values = as.integer(landuse_class == "commercial")`).
+
+## How spatial influence is modeled
+
+Spatial influence is **not a fitted decay curve**. It is estimated by *discrete model selection over a ladder of candidate distances*. With `block_length = 300` and `increment = "half"`, each factor is tested at 150, 300, 450, 600, 750 and 900 m, and each candidate variable encodes a different hypothesis about the factor's reach:
+
+-   **Proximity at *d***: a cell is exposed (1) if its centroid lies within *d* of *any* feature — a uniform "step" kernel, so a bar 10 m away and a bar 290 m away count the same under *d* = 300.
+-   **Density at bandwidth *d***: a cell is exposed if it sits in a high-*concentration* area — an Epanechnikov kernel density with bandwidth *d* at least 2 standard deviations above the mean. This captures clustering ("bar districts") rather than nearness to a single feature.
+
+The culling and stepwise stages then pick **at most one** variable per factor. Reading "bars / proximity / 300" therefore means: among all tested reaches and operationalizations of bars — and the option of excluding bars entirely — the 300 m proximity coding best explained the cell counts after BIC's complexity penalty.
+
+Three caveats for interpretation:
+
+-   Each factor's influence is a property of the factor *layer*: all bars share one estimated reach. For heterogeneous features (nightclubs vs. pubs), split the layer into separate factors.
+-   Risk is flat inside the influence zone and zero outside — a deliberate RTM simplification that keeps the output actionable ("patrol within 300 m of bars").
+-   The estimate is only as fine as the ladder: "300 m" means "better than 150 m and 450 m by BIC", and nothing beyond `block_length * max_blocks` is ever considered.
+
+## Interpreting RRVs and risk scores
+
+The final model is a log-linear count regression, so effects are multiplicative:
+
+$$E(\text{count}_j) = e^{\beta_0} \times \prod_i RRV_i^{\,x_{ij}}$$
+
+-   **RRV (relative risk value)** is the exponentiated coefficient — for an epidemiological audience, an *adjusted incidence rate ratio*: cells within the factor's influence zone have RRV times the expected event rate of unexposed cells, holding the other selected factors constant. For protective factors (coded 0/−1), exposed cells have their expected rate *divided* by the RRV (equivalently, an IRR of 1/RRV).
+-   **The relative risk score** of a cell is its predicted event count divided by the smallest predicted count in the study area. A score of 10 means "ten times the expected event rate of the safest cell". It is a relative index anchored at 1 — not a probability, and (without an offset; see below) events per unit *area*, not per capita.
+-   **p-values are a sanity check, not inference.** Selection is driven by cross-validation and BIC; the significance filter (≤ 0.05) makes the procedure robust, but post-selection p-values should not be reported as ordinary hypothesis tests.
+
+## Mapping and export
+
+`plot()` maps the risk terrain directly; `rtm_raster()` and `write_rtm()` (requiring the terra package) convert it to a raster or GeoTiff for GIS software, mirroring RTMDx's "output_score" and "output_prediction" files.
+
+```{r map}
+plot(fit)
+```
+
+```{r export, eval = requireNamespace("terra", quietly = TRUE)}
+tif <- file.path(tempdir(), "risk_map.tif")
+write_rtm(fit, tif, overwrite = TRUE)
+```
+
+## Validating against holdout events
+
+Does the risk terrain predict *future* events? Fit on period 1, then validate on period 2 events the model never saw:
+
+```{r holdout}
+set.seed(99)
+crimes2 <- do.call(rbind, lapply(seq_along(bars), function(i) {
+  b <- st_coordinates(bars[i])
+  n <- rpois(1, 8)
+  cbind(rnorm(n, b[1], 100), rnorm(n, b[2], 100))
+}))
+crimes2 <- crimes2[crimes2[, 1] >= 0 & crimes2[, 1] <= size &
+  crimes2[, 2] >= 0 & crimes2[, 2] <= size, ]
+crimes2 <- as_sfc(crimes2)
+
+val <- validate_rtm(fit, crimes2)
+val
+```
+
+The capture table reports the share of holdout events falling in the riskiest 1–20% of cells; the Predictive Accuracy Index (PAI) divides that by the share of area flagged, so PAI = 4 means flagged cells catch events at four times the study-area-wide rate. The AUC treats each cell as a binary case (any holdout event vs. none) with the risk score as classifier.
+
+```{r roc}
+plot(val)
+```
+
+## Rate models: an offset denominator
+
+Passing `offset` turns the count model into a rate model — the natural frame for many public health applications. The example below mimics a fatal-overdose study: overdose events cluster around bars, but an event's probability of being *fatal* only depends on distance to a naloxone distribution site. Using **all overdose events as the offset**, the model estimates *conditional lethality* — case fatality — rather than where overdoses happen.
+
+```{r overdose-data}
+set.seed(7)
+naloxone <- rand_pts(8)
+
+gen_period <- function() {
+  ev <- do.call(rbind, lapply(seq_along(bars), function(i) {
+    b <- st_coordinates(bars[i])
+    n <- rpois(1, 40)
+    cbind(rnorm(n, b[1], 150), rnorm(n, b[2], 150))
+  }))
+  ev <- rbind(ev, rand_pts(150))
+  ev <- ev[ev[, 1] >= 0 & ev[, 1] <= size & ev[, 2] >= 0 & ev[, 2] <= size, ]
+  d_nalox <- apply(ev, 1, \(e) min(sqrt((naloxone[, 1] - e[1])^2 + (naloxone[, 2] - e[2])^2)))
+  fatal <- runif(nrow(ev)) < ifelse(d_nalox <= 600, 0.03, 0.35)
+  list(all = as_sfc(ev), fatal = as_sfc(ev[fatal, , drop = FALSE]))
+}
+
+period1 <- gen_period()
+period2 <- gen_period() # for holdout validation
+```
+
+```{r overdose-fit}
+set.seed(3)
+fatality <- rtm(
+  outcome = period1$fatal,
+  offset = period1$all, # fatal + nonfatal events as the denominator
+  factors = list(
+    bars = bars,
+    naloxone = list(data = as_sfc(naloxone), type = "protective")
+  ),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+fatality
+```
+
+The offset absorbs event *volume*, so bars — which drive where overdoses occur but not how deadly they are — are correctly rejected, while the naloxone factor is selected as protective: within its influence zone the case-fatality rate is divided by its RRV. In a rate model, `relrisk` is the relative rate multiplier, defined for *every* cell from its exposures ("if an overdose happened here, how much deadlier than in the safest cell"), while cells with a zero denominator are excluded from fitting — harmlessly, since a place with no events carries no information about lethality.
+
+### Denominator-aware validation
+
+For a rate model, area-based capture is misleading: a high-lethality cell with few overdoses *should* capture few fatal events. Supplying the holdout period's denominator makes the validation denominator-aware:
+
+```{r overdose-validate}
+val_fatal <- validate_rtm(fatality, period2$fatal, new_offset = period2$all)
+val_fatal
+```
+
+`adj_pai` compares the share of fatal events captured with the share of the *denominator* in the same cells: values above 1 mean overdoses occurring in the flagged cells were disproportionately fatal — the model ranks lethality, not just volume. Note how the two metrics can disagree: the plain (area-based) `pai` may fall below 1 because high-lethality cells are not where overdoses are most frequent, while `adj_pai` stays above 1 — which is exactly the property a case-fatality model should have. The observed/expected ratio is computed against the model's expected counts given the holdout denominator, a genuine calibration check.
+
+### Sensitivity analysis with a smoothed offset
+
+Raw per-cell denominators are statistically exact, but you may wonder whether sparse denominators (single-event cells) affect the results. `smooth_offset()` builds a kernel-smoothed, total-preserving denominator surface for sensitivity analysis. Smoothing fabricates denominators where nothing was observed and blurs the denominator across exposure boundaries, so it should not be the primary analysis — refit at a couple of bandwidths and check that the RRVs are stable:
+
+```{r overdose-smooth}
+grid <- create_grid(boundary, cellsize = 150)
+
+rrv_at <- function(bw) {
+  off <- smooth_offset(period1$all, grid, bandwidth = bw)
+  set.seed(3)
+  refit <- suppressWarnings(rtm(
+    outcome = period1$fatal, offset = off,
+    factors = list(
+      bars = bars,
+      naloxone = list(data = as_sfc(naloxone), type = "protective")
+    ),
+    boundary = boundary, cell_size = 150, block_length = 300,
+    operation = "proximity", verbose = FALSE
+  ))
+  refit$selected[, c("factor", "operation", "spatial_influence", "rrv")]
+}
+
+rrv_at(450)
+rrv_at(900)
+```
+
+The comparison is diagnostic in both directions. Here the naloxone effect is stable across bandwidths (a robustness result worth reporting), but the smoothed models *spuriously select bars* — with an RRV that grows with the bandwidth. That is the numerator–denominator mismatch at work: smoothing moves denominator mass away from the activity peaks around bars while the fatal counts stay put, manufacturing apparent lethality exactly where the denominator was blurred the most. The raw-count model, which rejected bars, is the honest analysis; the smoothed runs bound how sensitive each factor is to denominator noise.
+
+## Notes and caveats
+
+-   **Ecological design.** Units are places, not people; associations are place-level and say nothing about individuals.
+-   **Denominators.** Without an offset, risk is per unit area. With an offset it is per denominator unit — and the denominator's own ascertainment (e.g. only *detected* nonfatal overdoses) shapes the estimand.
+-   **Association, not causation.** Selected factors are markers of risky environments that survived model selection, not causal effects.
+-   **Coverage.** Risk factor layers should include features slightly beyond the study area boundary, so their influence on edge cells is captured.
+
+## References
+
+-   Caplan, J. M., Kennedy, L. W., & Piza, E. L. (2013). *Risk Terrain Modeling Diagnostics Utility User Manual (Version 1.0)*. Newark, NJ: Rutgers Center on Public Security.
+-   Heffner, J. (2013). Statistics of the RTMDx Utility. In the above manual.
+-   Chainey, S., Tompson, L., & Uhlig, S. (2008). The utility of hotspot mapping for predicting spatial patterns of crime. *Security Journal*, 21, 4–28.
