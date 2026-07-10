@@ -58,6 +58,12 @@ spatial_influences <- function(block_length,
 #'   `"proximity"`, as in RTMDx).
 #' @param type `"aggravating"` (default) if the factor is expected to
 #'   increase risk, `"protective"` if expected to reduce it.
+#' @param density_quantile Optional quantile cutoff for the density
+#'   operationalization, passed to [binarize_density()]: `NULL` (default)
+#'   uses the RTMDx mean + 2 SD rule; a value such as 0.95 flags the top
+#'   `1 - density_quantile` share of cells instead, which keeps the
+#'   high-density exposure comparable across factors when densities are
+#'   skewed.
 #'
 #' @return A data.frame with one 0/1 (or 0/-1) column per candidate variable
 #'   and one row per grid cell. The variable metadata (factor name,
@@ -69,7 +75,8 @@ operationalize <- function(pt, grid, name,
                            max_blocks = 3,
                            increment = c("whole", "half"),
                            operation = c("proximity", "density", "both"),
-                           type = c("aggravating", "protective")) {
+                           type = c("aggravating", "protective"),
+                           density_quantile = NULL) {
   operation <- match.arg(operation)
   increment <- match.arg(increment)
   type <- match.arg(type)
@@ -116,7 +123,10 @@ operationalize <- function(pt, grid, name,
 
   if (operation %in% c("density", "both")) {
     for (d in distances) {
-      add_var("density", d, binarize_density(compute_density(pt, grid, bandwidth = d)))
+      add_var("density", d, binarize_density(
+        compute_density(pt, grid, bandwidth = d),
+        quantile = density_quantile
+      ))
     }
   }
 

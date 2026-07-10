@@ -17,6 +17,7 @@ rtm(
   max_blocks = 3,
   increment = c("whole", "half"),
   type = c("aggravating", "protective"),
+  density_quantile = NULL,
   cull = TRUE,
   nfolds = 5,
   cull_repeats = 1,
@@ -31,8 +32,9 @@ crimes, or fatal overdoses).}
 
 \item{factors}{A named list of risk factors. Each element is either an sf
 or sfc object, or a list with element \code{data} (the sf object) plus
-optional per-factor overrides of \code{operation}, \code{max_blocks}, \code{increment},
-and \code{type} (e.g. \code{type = "protective"}). Point layers support any
+optional per-factor overrides of \code{operation}, \code{max_blocks},
+\code{increment}, \code{type}, and \code{density_quantile} (e.g.
+\code{type = "protective"}). Point layers support any
 operation; line and polygon layers support \code{operation = "proximity"}
 only (see \code{\link[=operationalize]{operationalize()}}).}
 
@@ -95,8 +97,12 @@ instead, e.g. \code{values = as.integer(landuse == "commercial")}.}
 }
 Covariate values must be complete (no \code{NA}).}
 
-\item{operation, max_blocks, increment, type}{Defaults applied to every
-factor unless overridden per factor; see \code{\link[=operationalize]{operationalize()}}.}
+\item{operation, max_blocks, increment, type, density_quantile}{Defaults
+applied to every factor unless overridden per factor; see
+\code{\link[=operationalize]{operationalize()}}. \code{density_quantile = NULL} (default) binarizes
+densities with the RTMDx mean + 2 SD rule; a value such as 0.95
+flags the top 5\% of cells instead, keeping the high-density exposure
+comparable across factors when densities are skewed.}
 
 \item{cull}{If \code{TRUE} (default), run the penalized-regression culling step.}
 

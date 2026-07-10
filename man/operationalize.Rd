@@ -12,7 +12,8 @@ operationalize(
   max_blocks = 3,
   increment = c("whole", "half"),
   operation = c("proximity", "density", "both"),
-  type = c("aggravating", "protective")
+  type = c("aggravating", "protective"),
+  density_quantile = NULL
 )
 }
 \arguments{
@@ -32,6 +33,13 @@ spatial influence on edge cells is captured.}
 
 \item{type}{\code{"aggravating"} (default) if the factor is expected to
 increase risk, \code{"protective"} if expected to reduce it.}
+
+\item{density_quantile}{Optional quantile cutoff for the density
+operationalization, passed to \code{\link[=binarize_density]{binarize_density()}}: \code{NULL} (default)
+uses the RTMDx mean + 2 SD rule; a value such as 0.95 flags the top
+\code{1 - density_quantile} share of cells instead, which keeps the
+high-density exposure comparable across factors when densities are
+skewed.}
 }
 \value{
 A data.frame with one 0/1 (or 0/-1) column per candidate variable

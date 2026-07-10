@@ -34,8 +34,9 @@
 #'   risk factor exposures.
 #' @param factors A named list of risk factors. Each element is either an sf
 #'   or sfc object, or a list with element `data` (the sf object) plus
-#'   optional per-factor overrides of `operation`, `max_blocks`, `increment`,
-#'   and `type` (e.g. `type = "protective"`). Point layers support any
+#'   optional per-factor overrides of `operation`, `max_blocks`,
+#'   `increment`, `type`, and `density_quantile` (e.g.
+#'   `type = "protective"`). Point layers support any
 #'   operation; line and polygon layers support `operation = "proximity"`
 #'   only (see [operationalize()]).
 #' @param covariates Optional named list of pre-computed cell-level
@@ -81,8 +82,12 @@
 #' @param cell_size Grid cell size in CRS units. RTMDx recommends half the
 #'   block length.
 #' @param block_length Average block length in CRS units.
-#' @param operation,max_blocks,increment,type Defaults applied to every
-#'   factor unless overridden per factor; see [operationalize()].
+#' @param operation,max_blocks,increment,type,density_quantile Defaults
+#'   applied to every factor unless overridden per factor; see
+#'   [operationalize()]. `density_quantile = NULL` (default) binarizes
+#'   densities with the RTMDx mean + 2 SD rule; a value such as 0.95
+#'   flags the top 5% of cells instead, keeping the high-density exposure
+#'   comparable across factors when densities are skewed.
 #' @param cull If `TRUE` (default), run the penalized-regression culling step.
 #' @param nfolds Cross-validation folds for culling (default 5).
 #' @param cull_repeats Number of independent fold assignments the culling
@@ -131,6 +136,7 @@ rtm <- function(outcome, factors, boundary,
                 max_blocks = 3,
                 increment = c("whole", "half"),
                 type = c("aggravating", "protective"),
+                density_quantile = NULL,
                 cull = TRUE,
                 nfolds = 5,
                 cull_repeats = 1,
@@ -219,7 +225,8 @@ rtm <- function(outcome, factors, boundary,
       max_blocks = spec$max_blocks %||% max_blocks,
       increment = spec$increment %||% increment,
       operation = spec$operation %||% operation,
-      type = spec$type %||% type
+      type = spec$type %||% type,
+      density_quantile = spec$density_quantile %||% density_quantile
     )
   })
 

@@ -19,6 +19,67 @@ test_that("binarize_density returns all zeros for a constant density surface", {
   expect_equal(binarize_density(3), 0L)
 })
 
+test_that("binarize_density supports a quantile cutoff", {
+  # distinct values: quantile = 0.95 flags exactly the top 5%
+  x <- 1:100
+  expect_equal(which(binarize_density(x, quantile = 0.95) == 1), 96:100)
+
+  # zero-heavy surface: the threshold lands on 0, so exactly the
+  # positive-density cells are flagged (still within the nominal share)
+  x0 <- c(rep(0, 96), 1:4)
+  expect_equal(sum(binarize_density(x0, quantile = 0.95)), 4)
+
+  # constant surface: nothing exceeds the threshold
+  expect_equal(binarize_density(rep(5, 10), quantile = 0.95), integer(10))
+
+  # the quantile rule ignores n_sd
+  expect_equal(
+    binarize_density(x, n_sd = 100, quantile = 0.95),
+    binarize_density(x, quantile = 0.95)
+  )
+
+  expect_error(binarize_density(x, quantile = 0), "strictly between")
+  expect_error(binarize_density(x, quantile = 1.5), "strictly between")
+})
+
+test_that("density_quantile flows through operationalize and rtm", {
+  d <- synthetic_rtm_data()
+  grid <- create_grid(d$boundary, cellsize = 300)
+
+  sd_rule <- operationalize(
+    d$bars, grid, "bars",
+    block_length = 300, max_blocks = 2, operation = "density"
+  )
+  q_rule <- operationalize(
+    d$bars, grid, "bars",
+    block_length = 300, max_blocks = 2, operation = "density",
+    density_quantile = 0.9
+  )
+  # a permissive quantile flags at least as many cells as mean + 2 SD on
+  # these right-skewed densities, and never more than the nominal share
+  expect_true(all(colSums(q_rule) >= colSums(sd_rule)))
+  expect_true(all(colSums(q_rule) > 0))
+  expect_true(all(colSums(q_rule) <= ceiling(0.1 * nrow(grid))))
+
+  # per-factor override beats the global default
+  set.seed(1)
+  fit <- rtm(
+    outcome = d$crimes,
+    factors = list(
+      bars = list(data = d$bars, operation = "density", density_quantile = 0.9),
+      parks = d$parks
+    ),
+    boundary = d$boundary,
+    cell_size = 150,
+    block_length = 300,
+    operation = "proximity",
+    verbose = FALSE
+  )
+  expect_s3_class(fit, "rtm")
+  bars_vars <- fit$meta$variable[fit$meta$factor == "bars"]
+  expect_true(all(grepl("dens", bars_vars)))
+})
+
 test_that("empty factor layers are rejected with a clear error", {
   d <- synthetic_rtm_data()
   grid <- create_grid(d$boundary, cellsize = 300)

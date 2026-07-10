@@ -4,21 +4,41 @@
 \alias{binarize_density}
 \title{Binarize density values into high-density cells}
 \usage{
-binarize_density(x, n_sd = 2)
+binarize_density(x, n_sd = 2, quantile = NULL)
 }
 \arguments{
 \item{x}{Numeric vector of density values, e.g. from \code{\link[=compute_density]{compute_density()}}.}
 
 \item{n_sd}{Number of standard deviations above the mean defining the
-high-density threshold (default 2).}
+high-density threshold (default 2, as in RTMDx). Ignored when
+\code{quantile} is given.}
+
+\item{quantile}{Optional quantile cutoff strictly between 0 and 1;
+cells with density above this quantile are high-density. 0.95 is a
+sensible choice (top 5\% of cells).}
 }
 \value{
 An integer vector of 0/1 values.
 }
 \description{
 Reclassifies kernel density values into high-density (1) and other (0)
-cells. Following RTMDx, high-density cells are those with values at least
-2 standard deviations above the mean density. A constant density surface
-(e.g. no features within reach of any cell) has no high-density cells,
-so all zeros are returned.
+cells. Following RTMDx, high-density cells are by default those with
+values at least \code{n_sd} (2) standard deviations above the mean density.
+A constant density surface (e.g. no features within reach of any cell)
+has no high-density cells, so all zeros are returned.
+}
+\details{
+The mean + 2 SD rule flags about the top 2\% of cells when densities are
+roughly normal, but kernel densities of point patterns are strongly
+right-skewed, so the flagged share drifts uncontrollably with the skew
+— and hence differs between risk factors and bandwidths. Supplying
+\code{quantile} switches to a quantile rule that pins the flagged share
+directly: \code{quantile = 0.95} flags the cells above the 95th percentile
+(the top 5\%), making the "high-density" exposure comparable across
+factors. The threshold is applied strictly (\code{>}), so the flagged share
+is at most \code{1 - quantile}; ties can only reduce it. In particular, when
+more than \code{quantile} of the cells have zero density (out of reach of
+every feature), the threshold lands on 0 and exactly the
+positive-density cells are flagged, and a constant surface flags
+nothing.
 }
