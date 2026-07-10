@@ -187,7 +187,16 @@ The capture table reports the share of holdout events falling in the riskiest 1�
 plot(val)
 ```
 
-## Rate models: an offset denominator
+## In-sample goodness of fit
+
+`validate_rtm()` measures *predictive* performance on new events; `check_fit()` asks the complementary in-sample question — does the model describe the data it was fitted to?
+
+```{r fit-check}
+set.seed(4)
+check_fit(fit)
+```
+
+Two views are reported. The **pseudo-R²** values compare the model against an intercept-only null: the deviance version (Cameron & Windmeijer, 1996) is the headline number, and Nagelkerke's is included because published RTM studies report it. Expect values that look small by OLS standards — with sparse cell counts, most cell-to-cell variation is irreducible count noise — and use them to compare models on the same data. The **posterior-predictive checks** simulate replicate datasets from the fitted model and test whether it can reproduce the observed share of zero cells, the dispersion index, and the maximum cell count; a small p-value on `zero_share` suggests unmasked structural zeros (see `exclude` above), and one on `dispersion` under a Poisson fit suggests the negative binomial should have won.
 
 Passing `offset` turns the count model into a rate model — the natural frame for many public health applications. The example below mimics a fatal-overdose study: overdose events cluster around bars, but an event's probability of being *fatal* only depends on distance to a naloxone distribution site. Using **all overdose events as the offset**, the model estimates *conditional lethality* — case fatality — rather than where overdoses happen.
 

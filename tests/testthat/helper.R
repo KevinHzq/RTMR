@@ -22,7 +22,10 @@ fake_rtm <- function(counts, nx = 10, ny = 10, cell = 100) {
   grid$outcome_count <- counts
   fit <- stats::glm(counts ~ 1, family = stats::poisson())
   structure(
-    list(best_model = fit, grid = grid, has_offset = FALSE),
+    list(
+      best_model = fit, grid = grid, has_offset = FALSE,
+      family = "poisson", data = data.frame(outcome_count = counts)
+    ),
     class = "rtm"
   )
 }
