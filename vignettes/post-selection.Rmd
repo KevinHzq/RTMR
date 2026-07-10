@@ -1,0 +1,201 @@
+---
+title: "Post-selection inference"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Post-selection inference}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 5
+)
+```
+
+The `rtm()` pipeline *selects* its model: candidate variables are culled by a cross-validated penalized regression, survivors compete in a stepwise BIC search, and two distributions contest the final fit. Selection is what makes the output parsimonious and actionable, but it has two statistical costs, both acknowledged in the RTMDx documentation ("the significance values reported within the final model should not be viewed as regular p-values"; Heffner, 2013):
+
+-   **Invalid p-values.** The reported tests are computed on the same data that chose the specification, so they overstate the evidence.
+-   **The winner's curse.** A factor is more likely to be selected in exactly the samples where its coefficient came out high, so *selected* RRVs are biased away from 1 — most severely when events are few and estimates noisy.
+
+This vignette covers the two RTMR strategies for honest post-selection statements, and when to use which:
+
+1.  **Split and refit** (`split_events()` + `refit_rtm()`): exact, selection-free p-values and confidence intervals, at the cost of halving the events.
+2.  **Bootstrap the pipeline** (`stability_rtm()`): selection frequencies and selection-aware ("bagged") RRVs using the *full* sample — the tool for sparse settings where splitting would starve the selection stage.
+
+Neither changes the fitted model or the risk map; both sit alongside the standard output. (Cluster-robust intervals for spatial dependence are an orthogonal concern, covered in `vignette("spatial-inference")`.)
+
+```{r setup}
+library(RTMR)
+library(sf)
+```
+
+## Example data
+
+The same simulated setting as `vignette("RTMR")`: a 3 km × 3 km area, 15 bars around which overdose events cluster, and 8 naloxone distribution sites near which an overdose is far less likely to be *fatal*. Fitting fatal overdoses with all overdoses as the offset gives a case-fatality (conditional lethality) model.
+
+```{r simulate}
+set.seed(42)
+size <- 3000
+
+boundary <- st_sf(geometry = st_sfc(
+  st_polygon(list(rbind(
+    c(0, 0), c(size, 0), c(size, size), c(0, size), c(0, 0)
+  ))),
+  crs = 32610
+))
+
+rand_pts <- function(n) cbind(runif(n, 0, size), runif(n, 0, size))
+as_sfc <- function(m) st_sfc(lapply(seq_len(nrow(m)), \(i) st_point(m[i, ])), crs = 32610)
+
+bars <- rand_pts(15)
+naloxone <- rand_pts(8)
+
+gen_period <- function() {
+  ev <- do.call(rbind, lapply(seq_len(nrow(bars)), function(i) {
+    n <- rpois(1, 40)
+    cbind(rnorm(n, bars[i, 1], 150), rnorm(n, bars[i, 2], 150))
+  }))
+  ev <- rbind(ev, rand_pts(150))
+  ev <- ev[ev[, 1] >= 0 & ev[, 1] <= size & ev[, 2] >= 0 & ev[, 2] <= size, ]
+  d_nalox <- apply(ev, 1, \(e) min(sqrt((naloxone[, 1] - e[1])^2 + (naloxone[, 2] - e[2])^2)))
+  fatal <- runif(nrow(ev)) < ifelse(d_nalox <= 600, 0.03, 0.35)
+  list(all = as_sfc(ev), fatal = as_sfc(ev[fatal, , drop = FALSE]))
+}
+
+period1 <- gen_period()
+period2 <- gen_period()
+
+bars_sfc <- as_sfc(bars)
+naloxone_sfc <- as_sfc(naloxone)
+```
+
+```{r fit}
+set.seed(3)
+fatality <- rtm(
+  outcome = period1$fatal,
+  offset = period1$all,
+  factors = list(
+    bars = bars_sfc,
+    naloxone = list(data = naloxone_sfc, type = "protective")
+  ),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+fatality$selected[, c("factor", "type", "spatial_influence", "rrv", "p_value")]
+```
+
+The naloxone RRV above is a *selected* estimate and its p-value is not an ordinary test.
+
+## Strategy 1: split and refit
+
+`refit_rtm()` re-estimates the **frozen** specification — the selected variables, adjustment covariates, offset structure, and distribution family, with no re-selection — on events that played no part in choosing it. Because the new events are innocent of selection, the refitted p-values and confidence intervals are ordinary ones. Two sources of innocent events answer two different questions.
+
+### Same-period thinned split
+
+`split_events()` randomly assigns each outcome event to a training or test half. Thinning a Poisson process yields two *independent* processes over the same cells and the same period, so selecting on one half and re-estimating on the other isolates selection bias with no temporal confounding:
+
+```{r split-refit}
+set.seed(10)
+sp <- split_events(period1$fatal) # denominator stays whole
+
+set.seed(11)
+fit_train <- rtm(
+  outcome = sp$train, offset = period1$all,
+  factors = list(
+    bars = bars_sfc,
+    naloxone = list(data = naloxone_sfc, type = "protective")
+  ),
+  boundary = boundary, cell_size = 150, block_length = 300,
+  operation = "proximity", verbose = FALSE
+)
+
+refit_rtm(fit_train, sp$test) # reuses the period-1 denominator
+```
+
+The refitted interval is the honest one to report. Systematic *attenuation* — the refitted RRV falling below the training-half one — is the winner's curse made visible; but with few events the refitted estimate is itself noisy and can just as well land above the training value (as it happens to here), so it is the interval, not the point comparison, that carries the message. Two caveats: exact independence of the halves holds under Poisson variation (under overdispersion they are mildly positively dependent, making the refit slightly optimistic), and each half sees only part of the events — the motivation for Strategy 2 below.
+
+### Temporal holdout
+
+Feeding `refit_rtm()` a later period instead asks whether the effects *hold now* — the relevant check before prospective use:
+
+```{r temporal-refit}
+refit_rtm(fatality, period2$fatal, new_offset = period2$all)
+```
+
+Interpret the two designs together, because a temporal difference conflates two sources: selection bias *and* genuine change in the effects over time (a naloxone rollout, a changed drug supply). The thinned split isolates the selection component; whatever *additional* movement appears in the temporal refit is real drift. (In this simulation the generating process is stationary, so the temporal refit shows only selection attenuation plus noise.) The refit keeps the original grid and risk factor layers, so it assumes the *environment* is unchanged — if the factors themselves moved between periods, rebuild the model instead.
+
+## Strategy 2: bootstrap the pipeline when events are scarce
+
+Splitting is a luxury of data-rich settings. With a rural study area and a few dozen events, half the events may not support selection at all. `stability_rtm()` instead reruns the *entire* selection pipeline — culling and stepwise, under both distributions — on bootstrap resamples of the grid cells, using the full data every time, and aggregates three summaries:
+
+-   **Selection frequency** (Meinshausen & Bühlmann, 2010): the share of resamples selecting each factor. A factor selected in 95% of resamples is not an artifact of one lucky draw; one selected in 30% should not be reported as a finding, whatever its p-value.
+-   **Bagged RRV** (Efron, 2014): the coefficient averaged over *all* resamples, counting 0 when unselected, then exponentiated. Averaging over selection shrinks lucky-high estimates towards 1 in exactly the situations that create the winner's curse.
+-   **Percentile interval**: quantiles of the per-resample coefficient (zeros included), reflecting selection *and* estimation uncertainty together.
+
+A deliberately sparse example — the crime setting of `vignette("RTMR")` reduced to a few dozen events:
+
+```{r sparse}
+set.seed(44)
+parks <- rand_pts(10)
+crimes <- do.call(rbind, lapply(seq_len(nrow(bars)), function(i) {
+  n <- rpois(1, 3)
+  cbind(rnorm(n, bars[i, 1], 100), rnorm(n, bars[i, 2], 100))
+}))
+crimes <- rbind(crimes, rand_pts(10))
+crimes <- crimes[crimes[, 1] >= 0 & crimes[, 1] <= size &
+  crimes[, 2] >= 0 & crimes[, 2] <= size, ]
+crimes <- as_sfc(crimes)
+length(crimes)
+```
+
+```{r sparse-fit}
+set.seed(1)
+fit_sparse <- rtm(
+  outcome = crimes,
+  factors = list(bars = bars_sfc, parks = as_sfc(parks)),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+fit_sparse$selected[, c("factor", "spatial_influence", "rrv", "p_value")]
+```
+
+```{r stability}
+set.seed(2)
+stability_rtm(fit_sparse, nboot = 50, verbose = FALSE)
+```
+
+Reading the output: a high-frequency factor with a bagged RRV close to the full-data RRV is a stable finding whose selected estimate is only mildly inflated; a low-frequency factor is one that *would* have appeared — with a "significant" p-value — in some unlucky datasets, and the frequency is what exposes it. Fifty resamples give a rough reading; use `nboot = 200` for reportable numbers, and `resample = "block"` (a spatial block bootstrap) when `moran_rtm()` flags residual autocorrelation, since independent-cell resampling assumes exchangeable cells.
+
+The trade-off against splitting is exactness: the thinned split yields formally valid finite-sample p-values (under Poisson), while the bootstrap yields approximate intervals and a stability reading but no formal test.
+
+## Why not just use the LASSO?
+
+The pipeline already does — its culling stage is a cross-validated, sign-constrained elastic net (predominantly L1). The follow-up question, "would selecting with the LASSO *alone* avoid the post-selection problem?", has a clean answer: no. LASSO selection is still selection; an unpenalized refit of LASSO-chosen variables suffers the same winner's curse as a refit of stepwise-chosen ones. Reporting the *penalized* coefficients themselves shrinks in the right direction but is biased towards the null by an arbitrary amount (the tuning parameter) and comes without valid standard errors. The bagged RRV of `stability_rtm()` is the principled version of that shrinkage: it is driven by the data's actual selection variability rather than by a penalty, and it comes with an interval.
+
+## Choosing a strategy
+
+| Situation | Tool | What you get |
+|---|---|---|
+| Events plentiful | `split_events()` + `refit_rtm()` | Exact selection-free p-values and CIs |
+| Events scarce | `stability_rtm()` | Selection frequencies, bagged RRVs, approximate intervals — full sample retained |
+| Later period available | `refit_rtm(fit, period2, ...)` | Selection + drift combined: prospective transportability |
+| Residual spatial autocorrelation | see `vignette("spatial-inference")` | Dependence-honest intervals (orthogonal to selection) |
+
+The strategies compose: for a data-rich, autocorrelated problem, split-and-refit handles selection while cluster-robust standard errors on the refit handle dependence; for a sparse one, `stability_rtm(resample = "block")` addresses both at once, approximately.
+
+## References
+
+-   Heffner, J. (2013). Statistics of the RTMDx Utility. In J. Caplan, L. Kennedy, & E. Piza, *Risk Terrain Modeling Diagnostics Utility User Manual (Version 1.0)*. Newark, NJ: Rutgers Center on Public Security.
+-   Neufeld, A., Dharamshi, A., Gao, L. L., & Witten, D. (2024). Data thinning to avoid double dipping. *Journal of the American Statistical Association*, 119, 2416–2427.
+-   Efron, B. (2014). Estimation and accuracy after model selection. *Journal of the American Statistical Association*, 109, 991–1007.
+-   Meinshausen, N., & Bühlmann, P. (2010). Stability selection. *Journal of the Royal Statistical Society: Series B*, 72, 417–473.

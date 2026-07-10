@@ -132,7 +132,7 @@ $$E(\text{count}_j) = e^{\beta_0} \times \prod_i RRV_i^{\,x_{ij}}$$
 
 -   **RRV (relative risk value)** is the exponentiated coefficient — for an epidemiological audience, an *adjusted incidence rate ratio*: cells within the factor's influence zone have RRV times the expected event rate of unexposed cells, holding the other selected factors constant. For protective factors (coded 0/−1), exposed cells have their expected rate *divided* by the RRV (equivalently, an IRR of 1/RRV).
 -   **The relative risk score** of a cell is its predicted event count divided by the smallest predicted count in the study area. A score of 10 means "ten times the expected event rate of the safest cell". It is a relative index anchored at 1 — not a probability, and (without an offset; see below) events per unit *area*, not per capita.
--   **p-values are a sanity check, not inference.** Selection is driven by cross-validation and BIC; the significance filter (≤ 0.05) makes the procedure robust, but post-selection p-values should not be reported as ordinary hypothesis tests. For selection-free coefficients and honest p-values, re-estimate the selected specification on events that played no part in selection — see `refit_rtm()` and `split_events()` below.
+-   **p-values are a sanity check, not inference.** Selection is driven by cross-validation and BIC; the significance filter (≤ 0.05) makes the procedure robust, but post-selection p-values should not be reported as ordinary hypothesis tests. For honest post-selection inference see `vignette("post-selection")`.
 
 ## Mapping and export
 
@@ -228,39 +228,9 @@ val_fatal
 
 `adj_pai` compares the share of fatal events captured with the share of the *denominator* in the same cells: values above 1 mean overdoses occurring in the flagged cells were disproportionately fatal — the model ranks lethality, not just volume. Note how the two metrics can disagree: the plain (area-based) `pai` may fall below 1 because high-lethality cells are not where overdoses are most frequent, while `adj_pai` stays above 1 — which is exactly the property a case-fatality model should have. The observed/expected ratio is computed against the model's expected counts given the holdout denominator, a genuine calibration check.
 
-### Selection-clean coefficients: split and refit
+### Selection-clean coefficients
 
-The RRVs above were *selected* — the pipeline kept naloxone because it looked strong — so their p-values are not ordinary tests, and the estimates themselves are biased away from the null (the winner's curse: a factor is more likely to be selected in exactly the samples where its estimate came out high). `refit_rtm()` re-estimates the **frozen** specification — same variables, offset, and family, no re-selection — on events that played no part in selection, giving coefficients and p-values free of both problems. Two sources of such events answer two different questions.
-
-**Same-period thinned split.** `split_events()` randomly assigns each outcome event to a training or test half (thinning a Poisson process yields two independent processes over the same cells and period). Select on the training half, re-estimate on the test half; because both halves cover the same period, temporal change is excluded by construction, and any attenuation of the refitted RRVs is the selection bias itself:
-
-```{r split-refit}
-set.seed(10)
-sp <- split_events(period1$fatal) # denominator stays whole
-
-set.seed(11)
-fit_train <- rtm(
-  outcome = sp$train, offset = period1$all,
-  factors = list(
-    bars = bars,
-    naloxone = list(data = as_sfc(naloxone), type = "protective")
-  ),
-  boundary = boundary, cell_size = 150, block_length = 300,
-  operation = "proximity", verbose = FALSE
-)
-
-refit_rtm(fit_train, sp$test) # reuses the period-1 denominator
-```
-
-The effect replicates on the independent half, and the refitted interval is the honest one to report. When the training-half RRV exceeds the refitted one, that gap is the winner's curse made visible; a strong effect like this simulated one often replicates nearly unchanged, which is itself the reassuring result. The split costs power (each half sees fewer events), so for rare outcomes compare the training-half RRV against the refit interval rather than expecting both halves to clear significance.
-
-**Temporal holdout.** Feeding `refit_rtm()` a later period instead asks whether the effects *hold now* — the relevant check before prospective use:
-
-```{r temporal-refit}
-refit_rtm(fatality, period2$fatal, new_offset = period2$all)
-```
-
-Interpret the two designs together, because a temporal difference conflates two sources: selection bias *and* genuine change in the effects over time (a naloxone rollout, a changed drug supply). The thinned split isolates the selection component; whatever *additional* movement appears in the temporal refit is real drift. (In this simulation the generating process is stationary, so the temporal refit shows only the selection attenuation plus noise.) The refit keeps the original grid and risk factor layers, so it assumes the *environment* is unchanged — if the factors themselves moved between periods, rebuild the model instead.
+The RRVs above were *selected* — the pipeline kept naloxone because it looked strong — so their p-values are not ordinary tests, and the estimates themselves are biased away from the null (the winner's curse). RTMR provides two strategies for honest post-selection statements: re-estimating the frozen specification on events that played no part in selection (`split_events()` + `refit_rtm()`, also usable with a later period to check that effects hold prospectively), and bootstrapping the whole selection pipeline when events are too scarce to split (`stability_rtm()`, reporting selection frequencies and selection-aware bagged RRVs on the full sample). Both are covered in `vignette("post-selection")`.
 
 ### Sensitivity analysis with a smoothed offset
 

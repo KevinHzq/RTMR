@@ -100,7 +100,9 @@ split_events <- function(pt, prop = 0.5) {
 #'   `intercept` (refitted), `family`, `n_events`, `n_cells` (cells used
 #'   in the refit), `converged`, and `level`.
 #' @seealso [split_events()] to create a same-period split,
-#'   [validate_rtm()] for the discrimination side of holdout checking.
+#'   [stability_rtm()] for a full-sample alternative when events are too
+#'   scarce to split, and [validate_rtm()] for the discrimination side of
+#'   holdout checking.
 #' @export
 refit_rtm <- function(x, new_events, new_offset = NULL, level = 0.95) {
   if (!inherits(x, "rtm")) {

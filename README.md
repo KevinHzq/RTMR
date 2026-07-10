@@ -85,6 +85,15 @@ confidence intervals (`robust_rtm()`) — are covered in a second vignette:
 vignette("spatial-inference")
 ```
 
+Honest inference after model selection — thinned event splitting and
+frozen-specification refitting (`split_events()`, `refit_rtm()`), and
+full-sample bootstrap stability and bagged RRVs for sparse settings
+(`stability_rtm()`) — is covered in a third:
+
+```r
+vignette("post-selection")
+```
+
 ## References
 
 - Caplan, J. M., Kennedy, L. W., & Piza, E. L. (2013). *Risk Terrain

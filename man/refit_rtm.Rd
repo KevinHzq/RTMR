@@ -64,5 +64,7 @@ dispersion parameter is re-estimated on the new data.
 }
 \seealso{
 \code{\link[=split_events]{split_events()}} to create a same-period split,
-\code{\link[=validate_rtm]{validate_rtm()}} for the discrimination side of holdout checking.
+\code{\link[=stability_rtm]{stability_rtm()}} for a full-sample alternative when events are too
+scarce to split, and \code{\link[=validate_rtm]{validate_rtm()}} for the discrimination side of
+holdout checking.
 }
