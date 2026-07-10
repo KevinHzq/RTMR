@@ -187,7 +187,7 @@ Two complementary sensitivity analyses are worth reporting when the stakes warra
 
     This is a *sensitivity* analysis, not a replacement output: a flexible spatial surface competes with the risk factors for the same spatial variation (spatial confounding), so attenuation under the smooth does not by itself mean the factor is spurious — but stability under it is strong evidence of robustness.
 
--   **Holdout re-estimation.** Fitting the selected specification on a later period gives coefficients untainted by selection; see `validate_rtm()` for the discrimination side of holdout checking.
+-   **Selection-clean re-estimation.** `refit_rtm()` re-estimates the frozen specification on events that played no part in selection — either an independent thinned half of the same period (`split_events()`, isolating selection bias) or a later period (testing whether the effects hold prospectively). See the "Selection-clean coefficients" section of `vignette("RTMR")`.
 
 ## References
 

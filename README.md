@@ -62,6 +62,7 @@ plot(fit)            # risk terrain map
 write_rtm(fit, "risk_map.tif")            # GeoTiff for GIS (needs terra)
 
 validate_rtm(fit, next_period_events)     # holdout capture/PAI, ROC/AUC
+refit_rtm(fit, holdout_events)            # selection-free coefficients & CIs
 ```
 
 Rate models (e.g. spatial case fatality: fatal overdoses per overdose
