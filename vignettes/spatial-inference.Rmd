@@ -1,0 +1,197 @@
+---
+title: "Spatial diagnostics and robust inference"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Spatial diagnostics and robust inference}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 5
+)
+```
+
+The RTMDx procedure that `rtm()` replicates treats grid cells as independent observations. Its statistics chapter acknowledges the consequence directly: spatial relationships between cells are not modeled, and "significance values will be inaccurate when spatial autocorrelation is present" (Heffner, 2013). The effects go beyond p-values. When residuals of nearby cells are correlated,
+
+-   model-based standard errors are too small, so p-values are **anti-conservative**;
+-   the cross-validated culling step is **optimistic**, because random folds place near-duplicate neighbouring cells on both sides of the train/test split;
+-   BIC's complexity penalty `log(n)` assumes `n` independent cells, so the stepwise stage leans towards **selecting too many variables**.
+
+RTMR extends the replicated pipeline with three tools that make this assumption checkable and, where needed, fixable — without changing the pipeline itself or any of its point estimates:
+
+1.  `moran_rtm()` — *is there residual spatial autocorrelation at all?*
+2.  `correlogram_rtm()` — *if yes, how far does it reach?*
+3.  `robust_rtm()` — *report the RRVs with uncertainty that tolerates it.*
+
+```{r setup}
+library(RTMR)
+library(sf)
+```
+
+## Example data and model
+
+The same simulated study area as in the introductory vignette (`vignette("RTMR")`): a 3 km × 3 km area where crimes truly cluster around 15 bars and 10 parks are irrelevant.
+
+```{r simulate}
+set.seed(42)
+size <- 3000
+
+boundary <- st_sf(geometry = st_sfc(
+  st_polygon(list(rbind(
+    c(0, 0), c(size, 0), c(size, size), c(0, size), c(0, 0)
+  ))),
+  crs = 32610
+))
+
+rand_pts <- function(n) cbind(runif(n, 0, size), runif(n, 0, size))
+as_sfc <- function(m) st_sfc(lapply(seq_len(nrow(m)), \(i) st_point(m[i, ])), crs = 32610)
+
+bars <- rand_pts(15)
+parks <- rand_pts(10)
+
+crimes <- do.call(rbind, lapply(seq_len(nrow(bars)), function(i) {
+  n <- rpois(1, 8)
+  cbind(rnorm(n, bars[i, 1], 100), rnorm(n, bars[i, 2], 100))
+}))
+crimes <- rbind(crimes, rand_pts(30)) # background noise
+crimes <- crimes[crimes[, 1] >= 0 & crimes[, 1] <= size &
+  crimes[, 2] >= 0 & crimes[, 2] <= size, ]
+
+bars <- as_sfc(bars)
+parks <- as_sfc(parks)
+crimes <- as_sfc(crimes)
+```
+
+```{r fit}
+set.seed(1)
+fit <- rtm(
+  outcome = crimes,
+  factors = list(bars = bars, parks = parks),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+fit$selected[, c("factor", "operation", "spatial_influence", "rrv")]
+```
+
+## Step 1: test for residual autocorrelation
+
+`moran_rtm()` computes Moran's I on the final model's Pearson residuals, using queen contiguity between grid cells, and tests it by randomly permuting the residuals across cells. A significant positive I means residuals cluster in space *beyond what the selected risk factors explain*.
+
+```{r moran-good}
+set.seed(2)
+moran_rtm(fit)
+```
+
+The model captured the spatial structure of the events, so the residuals are compatible with independence and the standard RTMDx-style output can be reported as-is.
+
+What does failure look like? Suppose the bars layer had not been available — an *unmeasured, spatially structured* risk factor, which is the realistic way this assumption breaks:
+
+```{r moran-bad}
+set.seed(1)
+fit_nobars <- rtm(
+  outcome = crimes,
+  factors = list(parks = parks),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+set.seed(2)
+moran_rtm(fit_nobars)
+```
+
+The event clustering that bars used to absorb now sits in the residuals, and the diagnostic flags it. For offset (rate) models, the test automatically uses only the cells that entered the fit (non-zero denominator).
+
+## Step 2: estimate how far the correlation reaches
+
+Knowing that residual correlation exists is not yet actionable — for robust inference we need to know its *range*. `correlogram_rtm()` recomputes Moran's I within successive distance bands (a spatial correlogram): "how correlated are residuals whose cells lie 0–180 m apart? 180–360 m? ...". The distance at which the band-wise I decays into the permutation envelope is the estimated correlation range.
+
+```{r correlogram}
+set.seed(3)
+cg <- correlogram_rtm(fit_nobars, nsim = 499)
+cg
+```
+
+```{r correlogram-plot}
+plot(cg)
+```
+
+Two reading aids:
+
+-   The **estimated range** uses only the *initial consecutive run* of significant bands. Significant bands far from the origin (visible here around 1.1–1.6 km and again near 2.5 km) are not local residual correlation — they reflect the spacing of the urban fabric itself (here, the distances between bars) and the false positives expected when testing many bands — so they are deliberately ignored.
+-   This is the principled version of eyeballing a residual map for the size of its "blobs": the eye finds blobs in pure noise, while the correlogram attaches a permutation test to each distance.
+
+The suggested `cluster_size` is the estimated range; treat it as a floor and round up.
+
+## Step 3: report RRVs with cluster-robust uncertainty
+
+`robust_rtm()` re-estimates the variance of the final model's coefficients with a cluster-robust (sandwich) estimator, grouping cells into square spatial clusters. Correlation *within* a cluster is allowed to be arbitrary; clusters are assumed independent of each other. Crucially, the point estimates — RRVs, risk scores, the map — are **unchanged**: only the uncertainty statements are replaced, which is why the robust output can serve as the primary reported inference while remaining a faithful RTMDx replication.
+
+We report the well-specified model. Its own residuals showed no detectable correlation, so any moderate cluster size works; 600 m — comfortably above the ~360 m range estimated for the misspecified fit — is a conservative choice:
+
+```{r robust}
+rob <- robust_rtm(fit, cluster_size = 600)
+rob
+```
+
+Because results can be mildly sensitive to the clustering, report a second, coarser size and show the intervals barely move:
+
+```{r robust-sensitivity}
+robust_rtm(fit, cluster_size = 1200)$selected[, c("factor", "rrv", "ci_lower", "ci_upper", "p_robust")]
+```
+
+When `moran_rtm()` found nothing (as for `fit` here), robust and model-based p-values essentially agree — reporting the robust ones costs nothing. When autocorrelation is present, they diverge and the robust ones are the defensible choice.
+
+Two practical constraints:
+
+-   **Cluster asymptotics count clusters, not cells.** A warning is issued below 30 clusters — the warnings above illustrate it: a 3 km toy area tiled at 600 m yields only 25 clusters, and at 1200 m only 9, so the robust p-values themselves are shaky here. A city-scale study area gives ample clusters at the same sizes. The constraint also interacts with the size choice: `correlogram_rtm()`'s data-driven range is usually much smaller than the conservative default (twice the largest candidate spatial influence), giving both tighter validity *and* more clusters.
+-   **Custom clusters** may be more natural than square tiles: passing `cluster = ` a vector of, say, neighbourhood or census-tract identifiers (one per grid cell) clusters on substantively meaningful boundaries.
+
+## Three length scales, disambiguated
+
+The package now has three side-length arguments that are easy to conflate, especially since RTMDx recommends `cell_size = block_length / 2`, which makes two of them coincide numerically under default settings:
+
+| Argument | Of | Meaning |
+|---|---|---|
+| `cell_size` | `rtm()` | Side of a grid cell: the resolution of the analysis. |
+| `block_length` | `rtm()` | Average *city block* length: sets the ladder of candidate spatial influences (`block_length`, 2 × `block_length`, ... — or half-block steps with `increment = "half"`). |
+| `cluster_size` | `robust_rtm()` | Side of the square tiles that group cells for variance estimation only. Unrelated to city blocks; choose it from `correlogram_rtm()`. |
+
+## What these tools do *not* fix
+
+Cluster-robust variances address **dependence**, not **selection**. The risk factors and their spatial influences were still chosen by looking at the data (culling, stepwise BIC), so even robust p-values are conditional on the selected specification and should not be read as confirmatory tests — the same caveat the RTMDx manual attaches to its own output.
+
+Two complementary sensitivity analyses are worth reporting when the stakes warrant them:
+
+-   **A spatial-trend refit of the point estimates.** Refitting the *selected* specification with a smooth spatial term absorbs residual trend and shows whether the RRVs survive:
+
+    ```{r gam, eval = FALSE}
+    library(mgcv)
+    xy <- st_coordinates(st_centroid(st_geometry(fit$grid)))
+    dat <- cbind(fit$data, x = xy[, 1], y = xy[, 2])
+    gam_fit <- gam(
+      outcome_count ~ bars_prox_300 + s(x, y, bs = "gp"),
+      family = nb(), data = dat
+    )
+    exp(coef(gam_fit)["bars_prox_300"]) # compare with the RRV
+    ```
+
+    This is a *sensitivity* analysis, not a replacement output: a flexible spatial surface competes with the risk factors for the same spatial variation (spatial confounding), so attenuation under the smooth does not by itself mean the factor is spurious — but stability under it is strong evidence of robustness.
+
+-   **Holdout re-estimation.** Fitting the selected specification on a later period gives coefficients untainted by selection; see `validate_rtm()` for the discrimination side of holdout checking.
+
+## References
+
+-   Heffner, J. (2013). Statistics of the RTMDx Utility. In J. Caplan, L. Kennedy, & E. Piza, *Risk Terrain Modeling Diagnostics Utility User Manual (Version 1.0)*. Newark, NJ: Rutgers Center on Public Security.
+-   Cliff, A. D., & Ord, J. K. (1981). *Spatial Processes: Models and Applications*. London: Pion.
+-   Cameron, A. C., & Miller, D. L. (2015). A practitioner's guide to cluster-robust inference. *Journal of Human Resources*, 50, 317–372.
+-   Hodges, J. S., & Reich, B. J. (2010). Adding spatially-correlated errors can mess up the fixed effect you love. *The American Statistician*, 64, 325–334.

@@ -8,6 +8,25 @@ test_point <- function(x, n = 100, ...) {
   sf::st_sample(x, size = n, ...)
 }
 
+# build a minimal rtm-like object from a grid and per-cell counts, fitted
+# with an intercept-only Poisson model, so residual structure is controlled
+fake_rtm <- function(counts, nx = 10, ny = 10, cell = 100) {
+  boundary <- sf::st_sf(geometry = sf::st_sfc(
+    sf::st_polygon(list(rbind(
+      c(0, 0), c(nx * cell, 0), c(nx * cell, ny * cell), c(0, ny * cell), c(0, 0)
+    ))),
+    crs = 32610
+  ))
+  grid <- create_grid(boundary, cellsize = cell)
+  stopifnot(nrow(grid) == length(counts))
+  grid$outcome_count <- counts
+  fit <- stats::glm(counts ~ 1, family = stats::poisson())
+  structure(
+    list(best_model = fit, grid = grid, has_offset = FALSE),
+    class = "rtm"
+  )
+}
+
 # synthetic study area (3 km square, metric CRS) with a risk factor ("bars")
 # that generates most outcome events nearby, plus an irrelevant factor
 # ("parks") and background noise

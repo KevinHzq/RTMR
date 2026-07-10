@@ -75,6 +75,15 @@ interpretation guidance:
 vignette("RTMR")
 ```
 
+Spatial diagnostics and inference beyond the RTMDx replication — testing
+residuals for spatial autocorrelation (`moran_rtm()`), estimating its
+range (`correlogram_rtm()`), and reporting RRVs with cluster-robust
+confidence intervals (`robust_rtm()`) — are covered in a second vignette:
+
+```r
+vignette("spatial-inference")
+```
+
 ## References
 
 - Caplan, J. M., Kennedy, L. W., & Piza, E. L. (2013). *Risk Terrain
