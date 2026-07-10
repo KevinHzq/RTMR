@@ -66,3 +66,39 @@ test_that("rtm accepts per-factor specifications", {
   expect_true(all(parks_meta$spatial_influence <= 600))
   expect_equal(unique(parks_meta$type), "protective")
 })
+
+test_that("plot.rtm maps residuals with NA outside the fitted cells", {
+  d <- synthetic_rtm_data(seed = 42)
+  set.seed(1)
+  fit <- rtm(
+    outcome = d$crimes,
+    factors = list(bars = d$bars, parks = d$parks),
+    boundary = d$boundary,
+    cell_size = 150,
+    block_length = 300,
+    operation = "proximity",
+    verbose = FALSE
+  )
+
+  pdf(NULL)
+  on.exit(dev.off())
+  expect_silent(plot(fit, what = "residual"))
+  # the residual column is computed on a copy, not written into the object
+  expect_false("residual" %in% names(fit$grid))
+  expect_error(plot(fit, what = "nope"), "arg")
+
+  # offset model: zero-denominator cells are NA on the residual map
+  o <- synthetic_offset_data(seed = 7)
+  set.seed(5)
+  fit_off <- rtm(
+    outcome = o$fatal_events,
+    offset = o$all_events,
+    factors = list(bars = o$bars, naloxone = list(data = o$naloxone, type = "protective")),
+    boundary = o$boundary,
+    cell_size = 150,
+    block_length = 300,
+    operation = "proximity",
+    verbose = FALSE
+  )
+  expect_silent(plot(fit_off, what = "residual"))
+})

@@ -4,16 +4,24 @@
 \alias{plot.rtm}
 \title{Plot the risk terrain map}
 \usage{
-\method{plot}{rtm}(x, what = c("relrisk", "prediction", "outcome_count"), ...)
+\method{plot}{rtm}(x, what = c("relrisk", "prediction", "outcome_count", "residual"), ...)
 }
 \arguments{
 \item{x}{An \code{rtm} object.}
 
-\item{what}{Cell value to map: \code{"relrisk"} (relative risk score, default),
-\code{"prediction"} (expected event count), or \code{"outcome_count"}.}
+\item{what}{Cell value to map: \code{"relrisk"} (relative risk score,
+default), \code{"prediction"} (expected event count), \code{"outcome_count"},
+or \code{"residual"} (Pearson residuals of the final model).}
 
-\item{...}{Passed on to \link[sf:plot_sf]{plot.sf()}.}
+\item{...}{Passed on to \link[sf:plot_sf]{plot.sf()} (e.g. \code{pal}, \code{breaks}
+to override the residual palette).}
 }
 \description{
-Plot the risk terrain map
+Maps a cell-level quantity of the fitted model. \code{"residual"} maps the
+Pearson residuals of the final model on a diverging palette centred at
+0: strongly positive cells (red) host more events than the measured
+environment explains and are candidate locations of \emph{missing} risk
+factors — inspect them (and see \code{\link[=moran_rtm]{moran_rtm()}}/\code{\link[=correlogram_rtm]{correlogram_rtm()}} for
+whether and at what scale they cluster). For offset models, cells with
+a zero denominator did not enter the fit and are drawn as \code{NA}.
 }

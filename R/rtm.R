@@ -537,12 +537,40 @@ summary.rtm <- function(object, ...) {
 
 #' Plot the risk terrain map
 #'
+#' Maps a cell-level quantity of the fitted model. `"residual"` maps the
+#' Pearson residuals of the final model on a diverging palette centred at
+#' 0: strongly positive cells (red) host more events than the measured
+#' environment explains and are candidate locations of *missing* risk
+#' factors — inspect them (and see [moran_rtm()]/[correlogram_rtm()] for
+#' whether and at what scale they cluster). For offset models, cells with
+#' a zero denominator did not enter the fit and are drawn as `NA`.
+#'
 #' @param x An `rtm` object.
-#' @param what Cell value to map: `"relrisk"` (relative risk score, default),
-#'   `"prediction"` (expected event count), or `"outcome_count"`.
-#' @param ... Passed on to [plot.sf()][sf::plot_sf].
+#' @param what Cell value to map: `"relrisk"` (relative risk score,
+#'   default), `"prediction"` (expected event count), `"outcome_count"`,
+#'   or `"residual"` (Pearson residuals of the final model).
+#' @param ... Passed on to [plot.sf()][sf::plot_sf] (e.g. `pal`, `breaks`
+#'   to override the residual palette).
 #' @export
-plot.rtm <- function(x, what = c("relrisk", "prediction", "outcome_count"), ...) {
+plot.rtm <- function(x, what = c("relrisk", "prediction", "outcome_count", "residual"), ...) {
   what <- match.arg(what)
+  if (what == "residual") {
+    g <- x$grid
+    fit_cells <- if (isTRUE(x$has_offset)) g$offset_count > 0 else rep(TRUE, nrow(g))
+    g$residual <- NA_real_
+    g$residual[fit_cells] <- as.numeric(
+      stats::residuals(x$best_model, type = "pearson")
+    )
+    dots <- list(...)
+    # diverging palette centred at zero, so sign is readable at a glance
+    if (is.null(dots$pal)) {
+      dots$pal <- function(n) grDevices::hcl.colors(n, "Blue-Red 3")
+    }
+    if (is.null(dots$breaks)) {
+      m <- max(abs(g$residual), na.rm = TRUE)
+      dots$breaks <- seq(-m, m, length.out = 11)
+    }
+    return(invisible(do.call(plot, c(list(g["residual"], border = NA), dots))))
+  }
   plot(x$grid[what], border = NA, ...)
 }

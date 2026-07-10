@@ -189,6 +189,47 @@ Last, show the conclusions do not hinge on tuning choices. The usual suspects:
 -   **Smoothed offset** (rate models): `smooth_offset()` at two or three bandwidths, reporting RRV stability (see `vignette("RTMR")` for why raw counts stay the primary analysis).
 -   **Spatial trend** (if step 3 flagged): the `mgcv` refit from `vignette("spatial-inference")`.
 
+## When the fit is poor and you don't know why
+
+The steps above assume each diagnostic points at its own remedy. The harder situation is a poor fit with *no obvious candidate* for what is missing. Two things help: the failure signature classifies the problem, and the residuals localize it.
+
+**Read the signature first.** Which check failed narrows what kind of thing is missing:
+
+| Signature | Likely cause | Next move |
+|---|---|---|
+| `zero_share` flagged | Structural: unmasked impossible areas, denominator coverage, geocoding | Fix `exclude`/data, refit |
+| `dispersion` flagged, `moran_rtm()` quiet | Unobserved heterogeneity that is *not* spatially organized (often person-level; see below) | NB absorbs it: wider intervals, no bias — usually acceptable |
+| `moran_rtm()` flagged | A missing *spatially structured* factor; `correlogram_rtm()`'s range estimates its footprint (300 m = micro-place feature, 2 km = neighbourhood process) | Hunt at that scale (below), refit with the new factor |
+| Fits in-sample, fails `validate_rtm()` | Not a missing factor: instability or temporal drift | `stability_rtm()`, temporal `refit_rtm()` |
+
+**Then let the residuals do the searching.** `plot(fit, what = "residual")` maps the Pearson residuals on a diverging scale: red cells host more events than the measured environment explains — the candidate locations of whatever is missing. Refitting our example *without* the bars layer shows how directly this works (crosses mark the withheld bars):
+
+```{r residual-map, fig.width = 6, fig.height = 5.5}
+set.seed(6)
+fit_nobars <- rtm(
+  outcome = crimes,
+  factors = list(parks = parks),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  verbose = FALSE
+)
+plot(fit_nobars, what = "residual", reset = FALSE)
+plot(st_geometry(bars), add = TRUE, pch = 4, lwd = 2)
+```
+
+The workflow from here is deliberately qualitative: take the reddest locations (and the correlogram's scale estimate) to people with domain knowledge — what is *at* those places? — then encode the answer as a factor layer, refit, and rerun the chain from step 2. The `mgcv` spatial-smooth refit of `vignette("spatial-inference")` produces a smoothed version of the same map. This iterative use is how RTM is meant to work: the diagnostics turn "the model is bad" into "go find out what is at these coordinates, at roughly this spatial scale."
+
+### When the missing factors are personal, not areal
+
+Individual-level drivers (age, tolerance, using alone) reach an areal model only through *who is where*, which yields exactly two cases:
+
+-   **Composition is not spatially organized.** Person-level variation then cannot bias any place-level coefficient; it surfaces purely as overdispersion, which the pipeline's negative binomial option absorbs (that is what the NB's mixing distribution *is*). Wider intervals, no bias — a limitation priced in, not a failure.
+-   **Composition is spatially organized** (high-risk individuals concentrate in particular places — the realistic case). Then composition *is* an areal variable, whether measured or not: it triggers `moran_rtm()` like any missing spatial factor, and the remedy is to measure it at the cell level and adjust for it.
+
+For the second case, cell-level *summaries of person-level data* (share of events involving people who used alone, mean age, % unstably housed) are usually better than coarse administrative proxies — finer resolution controls composition where it actually varies. Pass them as `covariates` with `role = "adjustment"`, with four cautions: (1) build them from an *external source or a prior period*, not from the same events being modeled, to avoid circularity; (2) stabilize sparse cells — proportions from one or two people are noise, so shrink towards the overall mean or aggregate coarser; (3) fine-grained aggregates of health data may face small-cell privacy rules; and (4) adjusting for composition changes the estimand — RRVs become *contextual* effects net of who is present, which is often exactly what is wanted, but say so. What no areal analysis can do is fully separate a place's causal effect from the people it attracts (the contextual-vs-compositional problem); that requires individual-level designs, and is a scope statement for the writeup rather than a fixable defect.
+
 ## Quick reference
 
 | Order | Question | Tool | If it fails |
