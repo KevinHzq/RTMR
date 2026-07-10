@@ -15,8 +15,11 @@ create_grid(x, ..., clip = TRUE, exclude = NULL)
 \item{clip}{If \code{TRUE} (default), keep only cells intersecting the study
 area. If \code{FALSE}, return the full bounding-box grid.}
 
-\item{exclude}{Optional sf or sfc polygon layer of areas to exclude;
-cells fully covered by it are removed.}
+\item{exclude}{Optional sf or sfc layer of areas to exclude; cells fully
+covered by it are removed. Must contain polygon geometry (any number
+of features; they are unioned into one mask) in the same CRS as \code{x}.
+Buffer point or line features first if exclusion zones around them
+are intended, e.g. \code{sf::st_buffer(runways, 50)}.}
 }
 \value{
 An sf object with a \code{cell_id} column and polygon geometry.

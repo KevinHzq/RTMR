@@ -18,8 +18,11 @@
 #'   `square = FALSE` for hexagons.
 #' @param clip If `TRUE` (default), keep only cells intersecting the study
 #'   area. If `FALSE`, return the full bounding-box grid.
-#' @param exclude Optional sf or sfc polygon layer of areas to exclude;
-#'   cells fully covered by it are removed.
+#' @param exclude Optional sf or sfc layer of areas to exclude; cells fully
+#'   covered by it are removed. Must contain polygon geometry (any number
+#'   of features; they are unioned into one mask) in the same CRS as `x`.
+#'   Buffer point or line features first if exclusion zones around them
+#'   are intended, e.g. `sf::st_buffer(runways, 50)`.
 #'
 #' @return An sf object with a `cell_id` column and polygon geometry.
 #' @export
@@ -44,7 +47,16 @@ create_grid <- function(x, ..., clip = TRUE, exclude = NULL) {
     if (!inherits(exclude, c("sf", "sfc"))) {
       stop("`exclude` must be an sf or sfc object")
     }
+    if (length(sf::st_geometry(exclude)) == 0) {
+      stop("`exclude` has no features")
+    }
     excl <- sf::st_union(sf::st_geometry(exclude))
+    if (!isTRUE(any(sf::st_dimension(excl) == 2))) {
+      stop(
+        "`exclude` must contain polygon geometry; points or lines cannot ",
+        "cover grid cells (buffer them first if exclusion zones are intended)"
+      )
+    }
     covered <- lengths(sf::st_covered_by(sf_grid, excl)) > 0
     if (all(covered)) {
       stop("`exclude` covers every grid cell; nothing is left to model")

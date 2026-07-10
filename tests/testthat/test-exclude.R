@@ -35,6 +35,22 @@ test_that("create_grid errors when the exclusion removes everything", {
   )
 })
 
+test_that("create_grid rejects non-polygon and empty exclusions", {
+  boundary <- sf::st_sf(geometry = square(0, 0, 1000, 1000))
+  pts <- sf::st_sfc(sf::st_point(c(100, 100)), sf::st_point(c(300, 300)), crs = 32610)
+  lines <- sf::st_sfc(sf::st_linestring(rbind(c(0, 0), c(1000, 1000))), crs = 32610)
+  empty <- sf::st_sfc(crs = 32610)
+
+  expect_error(create_grid(boundary, cellsize = 100, exclude = pts), "polygon geometry")
+  expect_error(create_grid(boundary, cellsize = 100, exclude = lines), "polygon geometry")
+  expect_error(create_grid(boundary, cellsize = 100, exclude = empty), "no features")
+
+  # buffering the points makes them a valid mask
+  buffered <- sf::st_buffer(pts, 150)
+  masked <- create_grid(boundary, cellsize = 100, exclude = buffered)
+  expect_lt(nrow(masked), 100)
+})
+
 test_that("rtm excludes masked cells and warns about events inside the mask", {
   d <- synthetic_rtm_data(seed = 42)
   lake <- square(0, 0, 610, 610)
