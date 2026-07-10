@@ -94,6 +94,14 @@ full-sample bootstrap stability and bagged RRVs for sparse settings
 vignette("post-selection")
 ```
 
+And a step-by-step guide to running the whole diagnostic suite in the
+right order — from goodness of fit (`check_fit()`) through spatial
+dependence, selection uncertainty, and holdout validation — is in:
+
+```r
+vignette("diagnostics")
+```
+
 ## References
 
 - Caplan, J. M., Kennedy, L. W., & Piza, E. L. (2013). *Risk Terrain

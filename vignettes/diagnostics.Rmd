@@ -1,0 +1,211 @@
+---
+title: "Model diagnostics guide"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Model diagnostics guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 5
+)
+```
+
+RTMR ships a full set of diagnostics around the RTMDx-replicating pipeline. This vignette is the roadmap: which tool answers which question, and — since each stage's answer changes how the next stage should be run — the order in which to use them.
+
+The order, and the reasoning behind it:
+
+1.  **Design decisions** (before fitting): exclude impossible areas, fix the seed, stabilize the culling. These cannot be retrofitted.
+2.  **Does the model describe its own data?** (`check_fit()`) — coefficients from a model that cannot reproduce its own data are not worth interpreting, so absolute fit comes first.
+3.  **Can the cells be treated as independent?** (`moran_rtm()`, `correlogram_rtm()`) — the answer decides *how everything downstream is reported*: which standard errors to use, and whether resampling must be spatially blocked.
+4.  **Is the selection trustworthy?** (`robust_rtm()`, `stability_rtm()` or `split_events()` + `refit_rtm()`) — honest uncertainty for the RRVs, using the dependence verdict from step 3.
+5.  **Does it predict new events?** (`validate_rtm()`, temporal `refit_rtm()`) — the payoff question, asked last because a model that fails steps 2–4 predicts well only by accident.
+6.  **Sensitivity analyses** — tuning-choice robustness, reported alongside the primary results.
+
+Theory and interpretation live in the two specialized vignettes — `vignette("spatial-inference")` for step 3 and the dependence side of step 4, `vignette("post-selection")` for the selection side — this guide shows the workflow end to end.
+
+```{r setup}
+library(RTMR)
+library(sf)
+```
+
+## A worked example
+
+The simulated setting of `vignette("RTMR")`: crimes cluster around 15 bars, 10 parks are irrelevant.
+
+```{r simulate}
+set.seed(42)
+size <- 3000
+
+boundary <- st_sf(geometry = st_sfc(
+  st_polygon(list(rbind(
+    c(0, 0), c(size, 0), c(size, size), c(0, size), c(0, 0)
+  ))),
+  crs = 32610
+))
+
+rand_pts <- function(n) cbind(runif(n, 0, size), runif(n, 0, size))
+as_sfc <- function(m) st_sfc(lapply(seq_len(nrow(m)), \(i) st_point(m[i, ])), crs = 32610)
+
+bars <- rand_pts(15)
+parks <- rand_pts(10)
+
+gen_crimes <- function() {
+  ev <- do.call(rbind, lapply(seq_len(nrow(bars)), function(i) {
+    n <- rpois(1, 8)
+    cbind(rnorm(n, bars[i, 1], 100), rnorm(n, bars[i, 2], 100))
+  }))
+  ev <- rbind(ev, rand_pts(30))
+  as_sfc(ev[ev[, 1] >= 0 & ev[, 1] <= size & ev[, 2] >= 0 & ev[, 2] <= size, ])
+}
+crimes <- gen_crimes()
+crimes2 <- gen_crimes() # a second period, held out for step 5
+
+bars <- as_sfc(bars)
+parks <- as_sfc(parks)
+```
+
+## Step 1: design decisions, before fitting
+
+Three choices belong *before* the fit, because no later diagnostic can undo them:
+
+-   **Mask impossible areas.** Cells where events cannot occur (water bodies, restricted land) are structural zeros that dilute the model; pass them as `exclude` so the analysis is restricted to places where events are possible. (None here — the toy area is all "land".)
+-   **Fix the seed.** The culling step randomizes its cross-validation folds, as in RTMDx; `set.seed()` makes the whole run exactly reproducible.
+-   **Stabilize the culling.** `cull_repeats = 5` averages the culling cross-validation over five independent fold assignments, so which variables survive does not hinge on one lucky draw.
+
+```{r fit}
+set.seed(1)
+fit <- rtm(
+  outcome = crimes,
+  factors = list(bars = bars, parks = parks),
+  boundary = boundary,
+  cell_size = 150,
+  block_length = 300,
+  operation = "proximity",
+  cull_repeats = 5,
+  verbose = FALSE
+)
+fit
+```
+
+Remember that the p-values in this table are a selection sanity check, not inference — honest uncertainty comes in step 4.
+
+## Step 2: does the model describe its own data?
+
+`check_fit()` answers the absolute-fit question with pseudo-R² values and posterior-predictive checks, and its plot draws the two standard count-model visuals:
+
+```{r check-fit}
+set.seed(2)
+cf <- check_fit(fit)
+cf
+```
+
+```{r check-fit-plot, fig.width = 8, fig.height = 4}
+plot(cf)
+```
+
+What to look for, in order of importance:
+
+-   **`zero_share` flagged** → the mask from step 1 is incomplete (more structural zeros to exclude) or the process is genuinely zero-inflated. Fix and refit before proceeding.
+-   **`dispersion` flagged under a Poisson fit** → residual overdispersion; the BIC contest usually hands this to the negative binomial automatically, so a flag here deserves investigation.
+-   **Rootogram bars off the zero line / Q-Q off the diagonal** → the count range where the model fails, localized.
+-   **Pseudo-R²** calibrates *how much* is explained — expect small values on sparse cell counts; compare models on the same data, not against OLS conventions.
+
+Here all three checks pass and the visuals sit clean, so the model is worth interrogating further.
+
+## Step 3: can the cells be treated as independent?
+
+Everything the pipeline reports — p-values, the BIC penalty, the culling cross-validation — assumes independent cells. `moran_rtm()` tests that assumption on the residuals:
+
+```{r moran}
+set.seed(3)
+moran_rtm(fit)
+```
+
+No detectable residual clustering. Had this flagged (it does when a spatially structured factor is missing — see the worked failure in `vignette("spatial-inference")`), the follow-up chain is:
+
+1.  `correlogram_rtm(fit)` — estimate how far the residual correlation reaches;
+2.  use its suggested `cluster_size` in step 4's `robust_rtm()`, and switch `stability_rtm()` to `resample = "block"`;
+3.  optionally refit the selected specification with a spatial smooth (`mgcv::gam` with `s(x, y)`) as a *sensitivity* check on the RRVs themselves.
+
+The correlogram is cheap, so it is worth running even on a pass — "no range detected" is itself a reportable result:
+
+```{r correlogram}
+set.seed(4)
+cg <- correlogram_rtm(fit, nsim = 199)
+cg$range
+```
+
+## Step 4: is the selection trustworthy?
+
+Two distinct concerns, two tools, both reported against the *unchanged* point estimates:
+
+**Dependence-honest intervals.** `robust_rtm()` replaces the model-based standard errors with spatially clustered ones. When step 3 passed, robust and model-based p-values agree and reporting the robust ones costs nothing; when step 3 flagged, they diverge and the robust ones are the defensible choice. Use the correlogram's range (or the default) for `cluster_size`:
+
+```{r robust}
+rob <- suppressWarnings(robust_rtm(fit, cluster_size = 600))
+rob$selected[, c("factor", "rrv", "ci_lower", "ci_upper", "p_robust", "p_model")]
+```
+
+(The few-clusters warning is the 3 km toy area's fault — a city-scale grid gives ample clusters.)
+
+**Selection-aware estimates.** The RRVs were *selected*, so they are biased away from 1 (the winner's curse) and their p-values are conditional on the selection. With plentiful events, split and refit (`split_events()` + `refit_rtm()`) gives exact selection-free inference; with scarce events, bootstrap the pipeline instead — full sample, selection frequencies, bagged RRVs:
+
+```{r stability}
+set.seed(5)
+stability_rtm(fit, nboot = 50, verbose = FALSE)
+```
+
+Bars is selected in essentially every resample with a bagged RRV close to the reported one (a stable finding, mildly inflated at most); parks' low frequency is what exposes a would-be spurious factor. The decision rule between the two tools — and how they compose with step 3 — is in `vignette("post-selection")`.
+
+## Step 5: does it predict new events?
+
+The decisive test is data the model has never seen — typically the next time period:
+
+```{r validate}
+val <- validate_rtm(fit, crimes2)
+val
+```
+
+PAI says how concentrated the captured events are relative to the flagged area; AUC summarizes cell-level discrimination; observed/expected checks calibration when the periods have equal length (for rate models, pass `new_offset` for denominator-aware capture and a duration-free calibration check). And re-estimating the frozen specification on the new period asks whether the *effects* transport:
+
+```{r temporal-refit}
+refit_rtm(fit, crimes2)
+```
+
+A temporal change here mixes selection bias with genuine drift — the thinned split of `vignette("post-selection")` separates the two.
+
+## Step 6: sensitivity analyses
+
+Last, show the conclusions do not hinge on tuning choices. The usual suspects:
+
+-   **Density threshold**: refit with `density_quantile = 0.95` versus the RTMDx mean + 2 SD rule when density operationalizations were used.
+-   **Cluster size**: report `robust_rtm()` at a second, coarser `cluster_size` and show the intervals barely move.
+-   **Smoothed offset** (rate models): `smooth_offset()` at two or three bandwidths, reporting RRV stability (see `vignette("RTMR")` for why raw counts stay the primary analysis).
+-   **Spatial trend** (if step 3 flagged): the `mgcv` refit from `vignette("spatial-inference")`.
+
+## Quick reference
+
+| Order | Question | Tool | If it fails |
+|---|---|---|---|
+| 1 | Impossible areas? Reproducible? | `exclude`, `set.seed()`, `cull_repeats` | — (design; cannot be retrofitted) |
+| 2 | Reproduces its own data? | `check_fit()` + `plot()` | zeros → extend `exclude` or suspect zero-inflation; dispersion → NB; then refit |
+| 3 | Independent cells? | `moran_rtm()` → `correlogram_rtm()` | robust SEs in step 4, `resample = "block"`, mgcv sensitivity refit |
+| 4 | Honest uncertainty? | `robust_rtm()`; `stability_rtm()` or `split_events()` + `refit_rtm()` | report bagged/refit estimates; drop low-frequency factors from findings |
+| 5 | Predicts new events? | `validate_rtm()`, temporal `refit_rtm()` | revisit factors/spatial influences; check drift vs selection |
+| 6 | Robust to tuning? | `density_quantile`, `cluster_size`, `smooth_offset()` | report the sensitivity range |
+
+Two habits worth keeping throughout: `set.seed()` before every stochastic step (all of the diagnostics above use permutation, simulation, or resampling), and when a diagnostic fails, fix and *rerun the chain from that step down* — the stages are ordered precisely because each one's verdict shapes the next.
+
+## References
+
+-   Heffner, J. (2013). Statistics of the RTMDx Utility. In J. Caplan, L. Kennedy, & E. Piza, *Risk Terrain Modeling Diagnostics Utility User Manual (Version 1.0)*. Newark, NJ: Rutgers Center on Public Security.
+-   Cameron, A. C., & Windmeijer, F. A. G. (1996). R-squared measures for count data regression models. *Journal of Business & Economic Statistics*, 14, 209–220.
+-   Kleiber, C., & Zeileis, A. (2016). Visualizing count data regressions using rootograms. *The American Statistician*, 70, 296–303.
+-   Dunn, P. K., & Smyth, G. K. (1996). Randomized quantile residuals. *Journal of Computational and Graphical Statistics*, 5, 236–244.
+-   Chainey, S., Tompson, L., & Uhlig, S. (2008). The utility of hotspot mapping for predicting spatial patterns of crime. *Security Journal*, 21, 4–28.
