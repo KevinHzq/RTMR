@@ -20,7 +20,9 @@ An object of class \code{rtm_fit_check}: a list with \code{pseudo_r2}
 \code{checks} (data.frame with the observed statistic, the simulated
 interval bounds \code{sim_lo}/\code{sim_hi}, the simulated median, and the
 two-sided permutation p-value for \code{zero_share}, \code{dispersion}, and
-\code{max_count}), \code{family}, \code{n_cells}, \code{nsim}, and \code{level}.
+\code{max_count}), \code{counts}/\code{mu}/\code{theta} (observed counts, fitted means,
+and NB dispersion, used by \code{\link[=plot.rtm_fit_check]{plot.rtm_fit_check()}}), \code{family},
+\code{n_cells}, \code{nsim}, and \code{level}.
 }
 \description{
 Assesses how well the final model describes the observed cell counts,

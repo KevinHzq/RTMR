@@ -91,3 +91,42 @@ test_that("check_fit validates its inputs", {
   expect_error(check_fit(x, nsim = 1), "nsim")
   expect_error(check_fit(x, level = 0), "level")
 })
+
+test_that("expected frequencies match the fitted distribution", {
+  mu <- c(0.2, 1.5, 3)
+  k <- 0:50
+  # Poisson: frequencies over all k sum to the number of cells, and k = 0
+  # matches the direct computation
+  ef <- RTMR:::expected_frequencies(mu, NULL, k)
+  expect_equal(sum(ef), length(mu), tolerance = 1e-8)
+  expect_equal(ef[1], sum(dpois(0, mu)))
+  # negative binomial ditto
+  ef_nb <- RTMR:::expected_frequencies(mu, 1.2, k)
+  expect_equal(sum(ef_nb), length(mu), tolerance = 1e-6)
+  expect_equal(ef_nb[1], sum(dnbinom(0, mu = mu, size = 1.2)))
+})
+
+test_that("quantile residuals are standard normal under a correct model", {
+  set.seed(10)
+  mu <- rep(2, 2000)
+  y <- rpois(2000, mu)
+  r <- RTMR:::quantile_residuals(y, mu)
+  expect_gt(stats::ks.test(r, "pnorm")$p.value, 0.01)
+  expect_equal(mean(r), 0, tolerance = 0.1)
+  expect_equal(sd(r), 1, tolerance = 0.1)
+})
+
+test_that("plot.rtm_fit_check draws rootogram and QQ plots", {
+  set.seed(9)
+  x <- fake_rtm(rpois(100, 2))
+  set.seed(11)
+  cf <- check_fit(x, nsim = 19)
+
+  pdf(NULL)
+  on.exit(dev.off())
+  expect_silent(plot(cf))
+  expect_silent(plot(cf, which = "rootogram"))
+  expect_silent(plot(cf, which = "qq"))
+  expect_silent(plot(cf, which = "rootogram", max_count = 10))
+  expect_error(plot(cf, which = "nope"), "arg")
+})

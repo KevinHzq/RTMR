@@ -2,6 +2,7 @@
 
 S3method(plot,rtm)
 S3method(plot,rtm_correlogram)
+S3method(plot,rtm_fit_check)
 S3method(plot,rtm_validation)
 S3method(print,rtm)
 S3method(print,rtm_correlogram)

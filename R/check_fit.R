@@ -41,7 +41,9 @@
 #'   `checks` (data.frame with the observed statistic, the simulated
 #'   interval bounds `sim_lo`/`sim_hi`, the simulated median, and the
 #'   two-sided permutation p-value for `zero_share`, `dispersion`, and
-#'   `max_count`), `family`, `n_cells`, `nsim`, and `level`.
+#'   `max_count`), `counts`/`mu`/`theta` (observed counts, fitted means,
+#'   and NB dispersion, used by [plot.rtm_fit_check()]), `family`,
+#'   `n_cells`, `nsim`, and `level`.
 #' @references Cameron, A. C., & Windmeijer, F. A. G. (1996). R-squared
 #'   measures for count data regression models with applications to
 #'   health-care utilization. *Journal of Business & Economic
@@ -139,6 +141,9 @@ check_fit <- function(x, nsim = 500, level = 0.95) {
         nagelkerke = r2_nagelkerke
       ),
       checks = checks,
+      counts = y,
+      mu = mu,
+      theta = theta,
       family = x$family,
       n_cells = n,
       nsim = nsim,
@@ -146,6 +151,103 @@ check_fit <- function(x, nsim = 500, level = 0.95) {
     ),
     class = "rtm_fit_check"
   )
+}
+
+# expected frequency of each count value under the fitted model, summing
+# each cell's Poisson/NB probability at its own fitted mean
+expected_frequencies <- function(mu, theta, k) {
+  vapply(k, function(kk) {
+    if (is.null(theta)) {
+      sum(stats::dpois(kk, mu))
+    } else {
+      sum(stats::dnbinom(kk, mu = mu, size = theta))
+    }
+  }, numeric(1))
+}
+
+# randomized quantile residuals (Dunn & Smyth, 1996): uniform draws between
+# the fitted CDF just below and at the observed count, mapped to normal
+quantile_residuals <- function(y, mu, theta = NULL) {
+  cdf <- function(q) {
+    if (is.null(theta)) {
+      stats::ppois(q, mu)
+    } else {
+      stats::pnbinom(q, mu = mu, size = theta)
+    }
+  }
+  u <- stats::runif(length(y), cdf(y - 1), cdf(y))
+  stats::qnorm(pmin(pmax(u, 1e-12), 1 - 1e-12))
+}
+
+#' Plot goodness-of-fit diagnostics for a risk terrain model
+#'
+#' Draws the two standard visual fit checks for count models from a
+#' [check_fit()] result:
+#'
+#' * **Hanging rootogram** (Kleiber & Zeileis, 2016): for each count value
+#'   0, 1, 2, ... the square root of the observed cell frequency hangs as
+#'   a bar from the square root of the model-expected frequency. Bars
+#'   dangling below the zero line are counts the model *under*-predicts;
+#'   bars stopping short of it are counts it *over*-predicts. Zero excess
+#'   shows as the 0-bar punching below the line; overdispersion as a
+#'   sagging middle with heavy tails.
+#' * **Quantile-residual Q-Q plot** (Dunn & Smyth, 1996): randomized
+#'   quantile residuals are standard normal when the model is correct, so
+#'   departures from the diagonal read like an ordinary Q-Q plot. The
+#'   randomization draws from the RNG; call `set.seed()` first for a
+#'   reproducible figure.
+#'
+#' @param x An `rtm_fit_check` object from [check_fit()].
+#' @param which Plots to draw: `"rootogram"`, `"qq"`, or both (default;
+#'   drawn side by side).
+#' @param max_count Largest count value shown in the rootogram (default:
+#'   the maximum observed count).
+#' @param ... Passed on to [plot()].
+#' @references Kleiber, C., & Zeileis, A. (2016). Visualizing count data
+#'   regressions using rootograms. *The American Statistician*, 70,
+#'   296-303.
+#'
+#'   Dunn, P. K., & Smyth, G. K. (1996). Randomized quantile residuals.
+#'   *Journal of Computational and Graphical Statistics*, 5, 236-244.
+#' @export
+plot.rtm_fit_check <- function(x, which = c("rootogram", "qq"),
+                               max_count = NULL, ...) {
+  which <- match.arg(which, several.ok = TRUE)
+  if (length(which) > 1) {
+    op <- graphics::par(mfrow = c(1, length(which)))
+    on.exit(graphics::par(op))
+  }
+
+  if ("rootogram" %in% which) {
+    k <- 0:(max_count %||% max(x$counts))
+    obs <- vapply(k, function(kk) sum(x$counts == kk), numeric(1))
+    expd <- expected_frequencies(x$mu, x$theta, k)
+    top <- sqrt(expd)
+    bottom <- top - sqrt(obs)
+    plot(
+      k, top,
+      type = "n", xlab = "Count per cell", ylab = "sqrt(frequency)",
+      ylim = range(0, top, bottom), main = "Hanging rootogram", ...
+    )
+    graphics::rect(k - 0.4, bottom, k + 0.4, top, col = "grey85", border = "grey40")
+    graphics::lines(k, top, type = "o", pch = 16, col = "red3")
+    graphics::abline(h = 0, lty = 2)
+    graphics::mtext("bar below 0 = under-predicted count", side = 3, cex = 0.7)
+  }
+
+  if ("qq" %in% which) {
+    r <- sort(quantile_residuals(x$counts, x$mu, x$theta))
+    q <- stats::qnorm(stats::ppoints(length(r)))
+    plot(
+      q, r,
+      xlab = "Theoretical normal quantiles", ylab = "Quantile residuals",
+      main = "Quantile-residual Q-Q", pch = 16,
+      col = grDevices::adjustcolor("black", alpha.f = 0.4), ...
+    )
+    graphics::abline(0, 1, col = "red3")
+  }
+
+  invisible(x)
 }
 
 #' @export
