@@ -85,6 +85,12 @@
 #'   factor unless overridden per factor; see [operationalize()].
 #' @param cull If `TRUE` (default), run the penalized-regression culling step.
 #' @param nfolds Cross-validation folds for culling (default 5).
+#' @param cull_repeats Number of independent fold assignments the culling
+#'   cross-validation is averaged over (default 1, replicating RTMDx's
+#'   single randomized assignment). Fold assignment is random — call
+#'   `set.seed()` before `rtm()` for exact reproducibility — and values of
+#'   5-10 make the culling insensitive to any single fold draw; see
+#'   [cull_variables()].
 #' @param alpha_level Significance level for the stepwise validity check.
 #' @param verbose Print progress messages (default `TRUE`).
 #' @param ... Passed on to [create_grid()] (and hence [sf::st_make_grid()]),
@@ -127,6 +133,7 @@ rtm <- function(outcome, factors, boundary,
                 type = c("aggravating", "protective"),
                 cull = TRUE,
                 nfolds = 5,
+                cull_repeats = 1,
                 alpha_level = 0.05,
                 verbose = TRUE,
                 ...) {
@@ -359,7 +366,8 @@ rtm <- function(outcome, factors, boundary,
       x[fit_cells, ], outcome_count[fit_cells],
       nfolds = nfolds,
       offset = if (!is.null(offset_count)) log(offset_count[fit_cells]),
-      adjust = if (!is.null(adjust)) adjust[fit_cells, , drop = FALSE]
+      adjust = if (!is.null(adjust)) adjust[fit_cells, , drop = FALSE],
+      repeats = cull_repeats
     )
     say(length(kept), " variable(s) survived culling")
   } else {

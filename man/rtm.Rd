@@ -19,6 +19,7 @@ rtm(
   type = c("aggravating", "protective"),
   cull = TRUE,
   nfolds = 5,
+  cull_repeats = 1,
   alpha_level = 0.05,
   verbose = TRUE,
   ...
@@ -100,6 +101,13 @@ factor unless overridden per factor; see \code{\link[=operationalize]{operationa
 \item{cull}{If \code{TRUE} (default), run the penalized-regression culling step.}
 
 \item{nfolds}{Cross-validation folds for culling (default 5).}
+
+\item{cull_repeats}{Number of independent fold assignments the culling
+cross-validation is averaged over (default 1, replicating RTMDx's
+single randomized assignment). Fold assignment is random — call
+\code{set.seed()} before \code{rtm()} for exact reproducibility — and values of
+5-10 make the culling insensitive to any single fold draw; see
+\code{\link[=cull_variables]{cull_variables()}}.}
 
 \item{alpha_level}{Significance level for the stepwise validity check.}
 

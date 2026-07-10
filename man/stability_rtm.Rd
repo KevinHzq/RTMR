@@ -10,6 +10,7 @@ stability_rtm(
   resample = c("cell", "block"),
   cluster_size = NULL,
   nfolds = 5,
+  cull_repeats = 1,
   alpha_level = 0.05,
   level = 0.95,
   verbose = TRUE
@@ -27,8 +28,9 @@ gives a rough stability reading).}
 \item{cluster_size}{Tile side length for \code{resample = "block"}, in CRS
 units (default: twice the largest candidate spatial influence).}
 
-\item{nfolds, alpha_level}{Culling folds and stepwise significance level,
-as in \code{\link[=rtm]{rtm()}} (they are not stored in the fitted object; use the same
+\item{nfolds, cull_repeats, alpha_level}{Culling folds, culling
+cross-validation repeats, and stepwise significance level, as in
+\code{\link[=rtm]{rtm()}} (they are not stored in the fitted object; use the same
 values as the original call).}
 
 \item{level}{Level for the percentile intervals (default 0.95).}

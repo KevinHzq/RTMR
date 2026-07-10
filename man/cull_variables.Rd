@@ -10,7 +10,8 @@ cull_variables(
   alpha = c(0.8, 0.95),
   nfolds = 5,
   offset = NULL,
-  adjust = NULL
+  adjust = NULL,
+  repeats = 1
 )
 }
 \arguments{
@@ -30,6 +31,10 @@ scale (e.g. \code{log()} of denominator event counts), one value per cell.}
 \item{adjust}{Optional data.frame or matrix of adjustment covariates that
 are included unpenalized and sign-unconstrained; they do not compete
 for selection and are not returned.}
+
+\item{repeats}{Number of independent fold assignments to average the
+cross-validation over (default 1, as in RTMDx; 5-10 recommended for
+stable results).}
 }
 \value{
 A character vector with the names of the surviving candidate
@@ -49,4 +54,14 @@ RTMDx fits two small fixed L2 (ridge) penalties and picks the one with the
 best cross-validated likelihood; here the analogous mixing is controlled
 by trying several \code{alpha} values in \code{\link[glmnet:cv.glmnet]{glmnet::cv.glmnet()}} (alpha < 1 adds
 an L2 component, which helps collinear variables survive together).
+
+Fold assignment is randomized (as in RTMDx, where it changes on every
+invocation), so which variables survive can vary from run to run; call
+\code{set.seed()} beforehand for exact reproducibility. Setting \code{repeats}
+above 1 additionally stabilizes the result by \emph{repeated}
+cross-validation: the cross-validated deviance curve is averaged over
+\code{repeats} independent fold assignments before the penalty is chosen
+(the lambda path is computed from the full data, so it is common across
+repeats), making the culling far less sensitive to any single fold
+draw. \code{repeats = 1} reproduces the RTMDx single-assignment behaviour.
 }

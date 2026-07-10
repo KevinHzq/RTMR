@@ -281,6 +281,7 @@ The comparison is diagnostic in both directions. Here the naloxone effect is sta
 -   **Denominators.** Without an offset, risk is per unit area. With an offset it is per denominator unit — and the denominator's own ascertainment (e.g. only *detected* nonfatal overdoses) shapes the estimand.
 -   **Association, not causation.** Selected factors are markers of risky environments that survived model selection, not causal effects.
 -   **Coverage.** Risk factor layers should include features slightly beyond the study area boundary, so their influence on edge cells is captured.
+-   **Reproducibility and fold stability.** The culling step assigns cells to cross-validation folds at random (as in RTMDx, where the assignment changes on every run). Call `set.seed()` before `rtm()` for exact reproducibility. With borderline signals, which variables survive culling can depend on the fold draw; `cull_repeats = 5` (or more) averages the cross-validation over several independent fold assignments, making the culling insensitive to any single draw at proportional extra compute. The default (1) replicates RTMDx.
 
 ## References
 
