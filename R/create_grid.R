@@ -24,7 +24,9 @@ create_grid <- function(x, ..., clip = TRUE) {
   sf_grid <- sf::st_sf(cell_id = seq_along(sfc_grid), geometry = sfc_grid)
 
   if (clip) {
-    sf::st_filter(sf_grid, xboundary)
+    # equivalent to sf::st_filter(), which is avoided because it requires
+    # dplyr (an optional dependency of sf)
+    sf_grid[lengths(sf::st_intersects(sf_grid, xboundary)) > 0, ]
   } else {
     sf_grid
   }
