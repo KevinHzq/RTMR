@@ -20,6 +20,7 @@ BugReports: https://github.com/KevinHzq/RTMR/issues
 Imports:
     glmnet,
     graphics,
+    grDevices,
     MASS,
     sf,
     stats
