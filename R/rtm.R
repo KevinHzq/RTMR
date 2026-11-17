@@ -86,8 +86,10 @@
 #'   applied to every factor unless overridden per factor; see
 #'   [operationalize()]. `density_quantile = NULL` (default) binarizes
 #'   densities with the RTMDx mean + 2 SD rule; a value such as 0.95
-#'   flags the top 5% of cells instead, keeping the high-density exposure
-#'   comparable across factors when densities are skewed.
+#'   flags at most the top 5% of cells instead, keeping the high-density
+#'   exposure more comparable across factors when densities are skewed.
+#'   With a global quantile set, a per-factor `density_quantile = NULL`
+#'   restores the mean + 2 SD rule for that factor.
 #' @param cull If `TRUE` (default), run the penalized-regression culling step.
 #' @param nfolds Cross-validation folds for culling (default 5).
 #' @param cull_repeats Number of independent fold assignments the culling
@@ -146,6 +148,7 @@ rtm <- function(outcome, factors, boundary,
   operation <- match.arg(operation)
   increment <- match.arg(increment)
   type <- match.arg(type)
+  check_density_quantile(density_quantile)
 
   if (is.null(names(factors)) || any(!nzchar(names(factors)))) {
     stop("`factors` must be a named list of risk factor layers")
@@ -226,7 +229,13 @@ rtm <- function(outcome, factors, boundary,
       increment = spec$increment %||% increment,
       operation = spec$operation %||% operation,
       type = spec$type %||% type,
-      density_quantile = spec$density_quantile %||% density_quantile
+      # an explicit per-factor NULL restores the mean + 2 SD rule, so it
+      # must not fall through to the global default like the others
+      density_quantile = if ("density_quantile" %in% names(spec)) {
+        spec[["density_quantile"]]
+      } else {
+        density_quantile
+      }
     )
   })
 

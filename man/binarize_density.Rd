@@ -32,13 +32,19 @@ The mean + 2 SD rule flags about the top 2\% of cells when densities are
 roughly normal, but kernel densities of point patterns are strongly
 right-skewed, so the flagged share drifts uncontrollably with the skew
 — and hence differs between risk factors and bandwidths. Supplying
-\code{quantile} switches to a quantile rule that pins the flagged share
+\code{quantile} switches to a quantile rule that caps the flagged share
 directly: \code{quantile = 0.95} flags the cells above the 95th percentile
-(the top 5\%), making the "high-density" exposure comparable across
+(the top 5\%), making the "high-density" exposure more comparable across
 factors. The threshold is applied strictly (\code{>}), so the flagged share
-is at most \code{1 - quantile}; ties can only reduce it. In particular, when
-more than \code{quantile} of the cells have zero density (out of reach of
-every feature), the threshold lands on 0 and exactly the
-positive-density cells are flagged, and a constant surface flags
-nothing.
+is at most \code{1 - quantile}; ties can only reduce it, and a constant
+surface flags nothing.
+
+The quantile rule degenerates on sparse surfaces. When more than
+\code{quantile} of the cells have zero density (out of reach of every
+feature), the threshold lands on 0 and exactly the positive-density
+cells are flagged. The variable then no longer measures concentration:
+it marks every cell within the bandwidth of a feature, which is the
+proximity operationalization at that distance, and the flagged share
+falls below \code{1 - quantile}. \code{\link[=operationalize]{operationalize()}} warns when this happens;
+use a lower quantile, or the mean + 2 SD rule, for such factors.
 }

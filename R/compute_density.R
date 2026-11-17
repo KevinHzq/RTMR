@@ -50,15 +50,21 @@ compute_density <- function(pt, grid, bandwidth) {
 #' roughly normal, but kernel densities of point patterns are strongly
 #' right-skewed, so the flagged share drifts uncontrollably with the skew
 #' — and hence differs between risk factors and bandwidths. Supplying
-#' `quantile` switches to a quantile rule that pins the flagged share
+#' `quantile` switches to a quantile rule that caps the flagged share
 #' directly: `quantile = 0.95` flags the cells above the 95th percentile
-#' (the top 5%), making the "high-density" exposure comparable across
+#' (the top 5%), making the "high-density" exposure more comparable across
 #' factors. The threshold is applied strictly (`>`), so the flagged share
-#' is at most `1 - quantile`; ties can only reduce it. In particular, when
-#' more than `quantile` of the cells have zero density (out of reach of
-#' every feature), the threshold lands on 0 and exactly the
-#' positive-density cells are flagged, and a constant surface flags
-#' nothing.
+#' is at most `1 - quantile`; ties can only reduce it, and a constant
+#' surface flags nothing.
+#'
+#' The quantile rule degenerates on sparse surfaces. When more than
+#' `quantile` of the cells have zero density (out of reach of every
+#' feature), the threshold lands on 0 and exactly the positive-density
+#' cells are flagged. The variable then no longer measures concentration:
+#' it marks every cell within the bandwidth of a feature, which is the
+#' proximity operationalization at that distance, and the flagged share
+#' falls below `1 - quantile`. [operationalize()] warns when this happens;
+#' use a lower quantile, or the mean + 2 SD rule, for such factors.
 #'
 #' @param x Numeric vector of density values, e.g. from [compute_density()].
 #' @param n_sd Number of standard deviations above the mean defining the
@@ -72,10 +78,7 @@ compute_density <- function(pt, grid, bandwidth) {
 #' @export
 binarize_density <- function(x, n_sd = 2, quantile = NULL) {
   if (!is.null(quantile)) {
-    if (!is.numeric(quantile) || length(quantile) != 1 ||
-      quantile <= 0 || quantile >= 1) {
-      stop("`quantile` must be a single number strictly between 0 and 1")
-    }
+    check_density_quantile(quantile, "quantile")
     thr <- stats::quantile(x, quantile, names = FALSE)
     return(as.integer(x > thr))
   }
@@ -84,4 +87,16 @@ binarize_density <- function(x, n_sd = 2, quantile = NULL) {
     return(integer(length(x)))
   }
   as.integer(x >= mean(x) + n_sd * s)
+}
+
+# Validate a density quantile cutoff; `arg` names the argument in the error.
+# NULL (the RTMDx mean + 2 SD rule) is always valid.
+check_density_quantile <- function(q, arg = "density_quantile") {
+  if (is.null(q)) {
+    return(invisible(NULL))
+  }
+  if (!is.numeric(q) || length(q) != 1 || is.na(q) || q <= 0 || q >= 1) {
+    stop("`", arg, "` must be a single number strictly between 0 and 1")
+  }
+  invisible(q)
 }

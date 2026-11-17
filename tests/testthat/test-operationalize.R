@@ -80,6 +80,91 @@ test_that("density_quantile flows through operationalize and rtm", {
   expect_true(all(grepl("dens", bars_vars)))
 })
 
+test_that("density_quantile is validated even when density is not used", {
+  d <- synthetic_rtm_data()
+  grid <- create_grid(d$boundary, cellsize = 300)
+
+  expect_error(
+    operationalize(
+      d$bars, grid, "bars",
+      block_length = 300, operation = "proximity", density_quantile = 1.5
+    ),
+    "`density_quantile` must be a single number strictly between 0 and 1"
+  )
+  expect_error(
+    rtm(
+      outcome = d$crimes,
+      factors = list(bars = d$bars),
+      boundary = d$boundary,
+      cell_size = 150,
+      block_length = 300,
+      operation = "proximity",
+      density_quantile = "high",
+      verbose = FALSE
+    ),
+    "`density_quantile` must be"
+  )
+})
+
+test_that("a quantile rule that degenerates to proximity warns", {
+  d <- synthetic_rtm_data()
+  grid <- create_grid(d$boundary, cellsize = 150)
+
+  # 3 features at a 150 m bandwidth reach far fewer than 5% of the cells,
+  # so the threshold lands on 0 and every positive-density cell is flagged
+  expect_warning(
+    sparse <- operationalize(
+      d$bars[1:3], grid, "bars",
+      block_length = 300, max_blocks = 1, increment = "half",
+      operation = "density", density_quantile = 0.95
+    ),
+    "equivalent to proximity"
+  )
+  dens_150 <- compute_density(d$bars[1:3], grid, bandwidth = 150)
+  expect_equal(sparse$bars_dens_150, as.integer(dens_150 > 0))
+  expect_lt(mean(sparse$bars_dens_150), 0.05)
+
+  # the mean + 2 SD rule is never flagged as degenerate
+  expect_silent(operationalize(
+    d$bars[1:3], grid, "bars",
+    block_length = 300, max_blocks = 1, increment = "half",
+    operation = "density"
+  ))
+})
+
+test_that("a per-factor NULL density_quantile restores the mean + 2 SD rule", {
+  d <- synthetic_rtm_data()
+  set.seed(1)
+  fit <- rtm(
+    outcome = d$crimes,
+    factors = list(
+      bars = list(data = d$bars, density_quantile = NULL),
+      parks = d$parks
+    ),
+    boundary = d$boundary,
+    cell_size = 150,
+    block_length = 300,
+    max_blocks = 2,
+    operation = "density",
+    density_quantile = 0.8,
+    cull = FALSE,
+    verbose = FALSE
+  )
+
+  grid <- create_grid(d$boundary, cellsize = 150)
+  bars_sd <- operationalize(
+    d$bars, grid, "bars",
+    block_length = 300, max_blocks = 2, operation = "density"
+  )
+  parks_q <- operationalize(
+    d$parks, grid, "parks",
+    block_length = 300, max_blocks = 2, operation = "density",
+    density_quantile = 0.8
+  )
+  expect_equal(fit$data[names(bars_sd)], bars_sd, ignore_attr = TRUE)
+  expect_equal(fit$data[names(parks_q)], parks_q, ignore_attr = TRUE)
+})
+
 test_that("empty factor layers are rejected with a clear error", {
   d <- synthetic_rtm_data()
   grid <- create_grid(d$boundary, cellsize = 300)

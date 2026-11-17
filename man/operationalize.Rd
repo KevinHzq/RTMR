@@ -37,9 +37,12 @@ increase risk, \code{"protective"} if expected to reduce it.}
 \item{density_quantile}{Optional quantile cutoff for the density
 operationalization, passed to \code{\link[=binarize_density]{binarize_density()}}: \code{NULL} (default)
 uses the RTMDx mean + 2 SD rule; a value such as 0.95 flags the top
-\code{1 - density_quantile} share of cells instead, which keeps the
-high-density exposure comparable across factors when densities are
-skewed.}
+\code{1 - density_quantile} share of cells at most, which keeps the
+high-density exposure more comparable across factors when densities
+are skewed. A warning is raised for bandwidths at which more than
+\code{density_quantile} of the cells have zero density, because the
+variable then flags every cell within the bandwidth of a feature and
+so duplicates the proximity operationalization.}
 }
 \value{
 A data.frame with one 0/1 (or 0/-1) column per candidate variable

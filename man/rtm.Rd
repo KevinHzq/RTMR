@@ -101,8 +101,10 @@ Covariate values must be complete (no \code{NA}).}
 applied to every factor unless overridden per factor; see
 \code{\link[=operationalize]{operationalize()}}. \code{density_quantile = NULL} (default) binarizes
 densities with the RTMDx mean + 2 SD rule; a value such as 0.95
-flags the top 5\% of cells instead, keeping the high-density exposure
-comparable across factors when densities are skewed.}
+flags at most the top 5\% of cells instead, keeping the high-density
+exposure more comparable across factors when densities are skewed.
+With a global quantile set, a per-factor \code{density_quantile = NULL}
+restores the mean + 2 SD rule for that factor.}
 
 \item{cull}{If \code{TRUE} (default), run the penalized-regression culling step.}
 

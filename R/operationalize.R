@@ -61,9 +61,12 @@ spatial_influences <- function(block_length,
 #' @param density_quantile Optional quantile cutoff for the density
 #'   operationalization, passed to [binarize_density()]: `NULL` (default)
 #'   uses the RTMDx mean + 2 SD rule; a value such as 0.95 flags the top
-#'   `1 - density_quantile` share of cells instead, which keeps the
-#'   high-density exposure comparable across factors when densities are
-#'   skewed.
+#'   `1 - density_quantile` share of cells at most, which keeps the
+#'   high-density exposure more comparable across factors when densities
+#'   are skewed. A warning is raised for bandwidths at which more than
+#'   `density_quantile` of the cells have zero density, because the
+#'   variable then flags every cell within the bandwidth of a feature and
+#'   so duplicates the proximity operationalization.
 #'
 #' @return A data.frame with one 0/1 (or 0/-1) column per candidate variable
 #'   and one row per grid cell. The variable metadata (factor name,
@@ -80,6 +83,7 @@ operationalize <- function(pt, grid, name,
   operation <- match.arg(operation)
   increment <- match.arg(increment)
   type <- match.arg(type)
+  check_density_quantile(density_quantile)
 
   if (length(sf::st_geometry(pt)) == 0) {
     stop(
@@ -122,11 +126,28 @@ operationalize <- function(pt, grid, name,
   }
 
   if (operation %in% c("density", "both")) {
+    degenerate <- numeric(0)
     for (d in distances) {
-      add_var("density", d, binarize_density(
-        compute_density(pt, grid, bandwidth = d),
-        quantile = density_quantile
-      ))
+      dens <- compute_density(pt, grid, bandwidth = d)
+      high <- binarize_density(dens, quantile = density_quantile)
+      # quantile threshold at (or below the smallest) positive density: the
+      # variable marks "any feature within d", not a concentration
+      if (!is.null(density_quantile) && any(high == 1L) &&
+        all(high == as.integer(dens > 0))) {
+        degenerate <- c(degenerate, d)
+      }
+      add_var("density", d, high)
+    }
+    if (length(degenerate) > 0) {
+      warning(
+        "risk factor `", name, "`: with density_quantile = ", density_quantile,
+        ", the density variable(s) at bandwidth ",
+        paste(format(degenerate, trim = TRUE, scientific = FALSE), collapse = ", "),
+        " flag every cell with a non-zero density, which is equivalent to ",
+        "proximity at that distance rather than a high concentration; ",
+        "use a lower quantile or the mean + 2 SD rule for this factor",
+        call. = FALSE
+      )
     }
   }
 
