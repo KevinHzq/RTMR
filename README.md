@@ -95,7 +95,7 @@ vignette("post-selection")
 ```
 
 And a step-by-step guide to running the whole diagnostic suite in the
-right order — from goodness of fit (`check_fit()`) through spatial
+right order — from goodness of fit (`check_rtm()`) through spatial
 dependence, selection uncertainty, and holdout validation — is in:
 
 ```r

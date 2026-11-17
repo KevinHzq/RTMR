@@ -21,7 +21,7 @@ RTMR ships a full set of diagnostics around the RTMDx-replicating pipeline. This
 The order, and the reasoning behind it:
 
 1.  **Design decisions** (before fitting): exclude impossible areas, fix the seed, stabilize the culling. These cannot be retrofitted.
-2.  **Does the model describe its own data?** (`check_fit()`) — coefficients from a model that cannot reproduce its own data are not worth interpreting, so absolute fit comes first.
+2.  **Does the model describe its own data?** (`check_rtm()`) — coefficients from a model that cannot reproduce its own data are not worth interpreting, so absolute fit comes first.
 3.  **Can the cells be treated as independent?** (`moran_rtm()`, `correlogram_rtm()`) — the answer decides *how everything downstream is reported*: which standard errors to use, and whether resampling must be spatially blocked.
 4.  **Is the selection trustworthy?** (`robust_rtm()`, `stability_rtm()` or `split_events()` + `refit_rtm()`) — honest uncertainty for the RRVs, using the dependence verdict from step 3.
 5.  **Does it predict new events?** (`validate_rtm()`, temporal `refit_rtm()`) — the payoff question, asked last because a model that fails steps 2–4 predicts well only by accident.
@@ -97,11 +97,11 @@ Remember that the p-values in this table are a selection sanity check, not infer
 
 ## Step 2: does the model describe its own data?
 
-`check_fit()` answers the absolute-fit question with pseudo-R² values and posterior-predictive checks, and its plot draws the two standard count-model visuals:
+`check_rtm()` answers the absolute-fit question with pseudo-R² values and posterior-predictive checks, and its plot draws the two standard count-model visuals:
 
 ```{r check-fit}
 set.seed(2)
-cf <- check_fit(fit)
+cf <- check_rtm(fit)
 cf
 ```
 
@@ -235,7 +235,7 @@ For the second case, cell-level *summaries of person-level data* (share of event
 | Order | Question | Tool | If it fails |
 |---|---|---|---|
 | 1 | Impossible areas? Reproducible? | `exclude`, `set.seed()`, `cull_repeats` | — (design; cannot be retrofitted) |
-| 2 | Reproduces its own data? | `check_fit()` + `plot()` | zeros → extend `exclude` or suspect zero-inflation; dispersion → NB; then refit |
+| 2 | Reproduces its own data? | `check_rtm()` + `plot()` | zeros → extend `exclude` or suspect zero-inflation; dispersion → NB; then refit |
 | 3 | Independent cells? | `moran_rtm()` → `correlogram_rtm()` | robust SEs in step 4, `resample = "block"`, mgcv sensitivity refit |
 | 4 | Honest uncertainty? | `robust_rtm()`; `stability_rtm()` or `split_events()` + `refit_rtm()` | report bagged/refit estimates; drop low-frequency factors from findings |
 | 5 | Predicts new events? | `validate_rtm()`, temporal `refit_rtm()` | revisit factors/spatial influences; check drift vs selection |

@@ -87,9 +87,7 @@ stability_rtm <- function(x, nboot = 200,
     stop("`level` must be a single number strictly between 0 and 1")
   }
 
-  fit_cells <- which(
-    if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
-  )
+  fit_cells <- which(fitted_cells(x))
   data <- x$data[fit_cells, , drop = FALSE]
   meta <- x$meta[, setdiff(names(x$meta), "culled"), drop = FALSE]
   candidates <- meta$variable

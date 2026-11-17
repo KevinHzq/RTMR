@@ -65,7 +65,7 @@ robust_rtm <- function(x, cluster_size = NULL, cluster = NULL, level = 0.95) {
     stop("`level` must be a single number strictly between 0 and 1")
   }
 
-  fit_cells <- if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
+  fit_cells <- fitted_cells(x)
 
   if (is.null(cluster)) {
     if (is.null(cluster_size)) {

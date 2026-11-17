@@ -1,20 +1,3 @@
-fit_offset_model <- function(d) {
-  set.seed(3)
-  rtm(
-    outcome = d$fatal_events,
-    offset = d$all_events,
-    factors = list(
-      bars = d$bars,
-      naloxone = list(data = d$naloxone, type = "protective")
-    ),
-    boundary = d$boundary,
-    cell_size = 150,
-    block_length = 300,
-    operation = "proximity",
-    verbose = FALSE
-  )
-}
-
 test_that("denominator-aware validation reports adjusted PAI and calibration", {
   d <- synthetic_offset_data()
   fit <- fit_offset_model(d)

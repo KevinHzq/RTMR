@@ -564,22 +564,46 @@ summary.rtm <- function(object, ...) {
 plot.rtm <- function(x, what = c("relrisk", "prediction", "outcome_count", "residual"), ...) {
   what <- match.arg(what)
   if (what == "residual") {
-    g <- x$grid
-    fit_cells <- if (isTRUE(x$has_offset)) g$offset_count > 0 else rep(TRUE, nrow(g))
-    g$residual <- NA_real_
-    g$residual[fit_cells] <- as.numeric(
-      stats::residuals(x$best_model, type = "pearson")
-    )
-    dots <- list(...)
-    # diverging palette centred at zero, so sign is readable at a glance
-    if (is.null(dots$pal)) {
-      dots$pal <- function(n) grDevices::hcl.colors(n, "Blue-Red 3")
-    }
-    if (is.null(dots$breaks)) {
-      m <- max(abs(g$residual), na.rm = TRUE)
-      dots$breaks <- seq(-m, m, length.out = 11)
-    }
-    return(invisible(do.call(plot, c(list(g["residual"], border = NA), dots))))
+    return(invisible(plot_residual_map(x, ...)))
   }
   plot(x$grid[what], border = NA, ...)
+}
+
+# map of the final model's Pearson residuals; unlike the other `what`
+# values of plot.rtm() the residuals are not a stored grid column, and
+# cells that did not enter the fit stay NA
+plot_residual_map <- function(x, ...) {
+  g <- x$grid
+  g$residual <- NA_real_
+  g$residual[fitted_cells(x)] <- fitted_residuals(x, type = "pearson")
+  dots <- list(...)
+  # diverging palette centred at zero, so sign is readable at a glance
+  if (is.null(dots$pal)) {
+    dots$pal <- function(n) grDevices::hcl.colors(n, "Blue-Red 3")
+  }
+  if (is.null(dots$breaks)) {
+    m <- max(abs(g$residual), na.rm = TRUE)
+    dots$breaks <- seq(-m, m, length.out = 11)
+  }
+  do.call(plot, c(list(g["residual"], border = NA), dots))
+}
+
+# logical index of the grid cells that entered the fit: all of them, or
+# for an offset model those with a non-zero denominator
+fitted_cells <- function(x) {
+  if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
+}
+
+# residuals of the final model, one per fitted cell; errors when they no
+# longer line up with fitted_cells(x), i.e. the object was tampered with
+fitted_residuals <- function(x, type = "pearson") {
+  e <- as.numeric(stats::residuals(x$best_model, type = type))
+  n_fitted <- sum(fitted_cells(x))
+  if (length(e) != n_fitted) {
+    stop(
+      "model residuals (", length(e), ") do not match the fitted cells (",
+      n_fitted, "); was the object modified?"
+    )
+  }
+  e
 }

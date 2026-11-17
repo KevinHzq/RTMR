@@ -61,14 +61,8 @@ correlogram_rtm <- function(x, breaks = NULL, nsim = 199,
     stop("`alpha_level` must be a single number strictly between 0 and 1")
   }
 
-  fit_cells <- if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
-  e <- as.numeric(stats::residuals(x$best_model, type = type))
-  if (length(e) != sum(fit_cells)) {
-    stop(
-      "model residuals (", length(e), ") do not match the fitted cells (",
-      sum(fit_cells), "); was the object modified?"
-    )
-  }
+  fit_cells <- fitted_cells(x)
+  e <- fitted_residuals(x, type)
 
   geom <- sf::st_geometry(x$grid)[fit_cells]
   ctr_sfc <- suppressWarnings(sf::st_centroid(geom))

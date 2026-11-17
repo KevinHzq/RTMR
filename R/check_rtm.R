@@ -34,7 +34,8 @@
 #' @param x An `rtm` object.
 #' @param nsim Number of simulated replicate datasets (default 500).
 #' @param level Level for the reported posterior-predictive intervals
-#'   (default 0.95).
+#'   (default 0.95). The print method flags a statistic as not reproduced
+#'   by the model when its p-value is at most `1 - level`.
 #'
 #' @return An object of class `rtm_fit_check`: a list with `pseudo_r2`
 #'   (named numeric vector: `deviance`, `mcfadden`, `nagelkerke`),
@@ -54,7 +55,7 @@
 #' @seealso [validate_rtm()] for out-of-sample predictive accuracy,
 #'   [moran_rtm()] for residual spatial structure.
 #' @export
-check_fit <- function(x, nsim = 500, level = 0.95) {
+check_rtm <- function(x, nsim = 500, level = 0.95) {
   if (!inherits(x, "rtm")) {
     stop("`x` must be an rtm object")
   }
@@ -66,7 +67,7 @@ check_fit <- function(x, nsim = 500, level = 0.95) {
   }
 
   fit <- x$best_model
-  fit_cells <- if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
+  fit_cells <- fitted_cells(x)
   y <- x$data$outcome_count[fit_cells]
   mu <- as.numeric(stats::fitted(fit))
   if (length(mu) != length(y)) {
@@ -101,21 +102,19 @@ check_fit <- function(x, nsim = 500, level = 0.95) {
   # posterior-predictive checks: simulate replicate counts from the fitted
   # model and compare summary statistics
   theta <- if (x$family == "nb") fit$theta
-  simulate_counts <- if (x$family == "nb") {
-    function() stats::rnbinom(n, mu = mu, size = theta)
-  } else {
-    function() stats::rpois(n, mu)
-  }
-  stat_fun <- function(v) {
+  model_dist <- count_distribution(mu, theta)
+  summary_stats <- function(counts) {
     c(
-      zero_share = mean(v == 0),
-      dispersion = stats::var(v) / mean(v),
-      max_count = max(v)
+      zero_share = mean(counts == 0),
+      dispersion = stats::var(counts) / mean(counts),
+      max_count = max(counts)
     )
   }
 
-  observed <- stat_fun(y)
-  sims <- vapply(seq_len(nsim), function(s) stat_fun(simulate_counts()), observed)
+  observed <- summary_stats(y)
+  sims <- vapply(
+    seq_len(nsim), function(s) summary_stats(model_dist$simulate()), observed
+  )
 
   probs <- c((1 - level) / 2, 0.5, 1 - (1 - level) / 2)
   checks <- do.call(rbind, lapply(names(observed), function(nm) {
@@ -153,36 +152,43 @@ check_fit <- function(x, nsim = 500, level = 0.95) {
   )
 }
 
-# expected frequency of each count value under the fitted model, summing
-# each cell's Poisson/NB probability at its own fitted mean
-expected_frequencies <- function(mu, theta, k) {
-  vapply(k, function(kk) {
-    if (is.null(theta)) {
-      sum(stats::dpois(kk, mu))
-    } else {
-      sum(stats::dnbinom(kk, mu = mu, size = theta))
-    }
-  }, numeric(1))
+# the fitted count distribution, evaluated at each cell's own mean `mu`:
+# Poisson, or negative binomial when a dispersion `theta` is given. This is
+# the one place that branches on the family; callers use the random draw,
+# pmf and cdf it returns
+count_distribution <- function(mu, theta = NULL) {
+  if (is.null(theta)) {
+    list(
+      simulate = function() stats::rpois(length(mu), mu),
+      pmf = function(k) stats::dpois(k, mu),
+      cdf = function(q) stats::ppois(q, mu)
+    )
+  } else {
+    list(
+      simulate = function() stats::rnbinom(length(mu), mu = mu, size = theta),
+      pmf = function(k) stats::dnbinom(k, mu = mu, size = theta),
+      cdf = function(q) stats::pnbinom(q, mu = mu, size = theta)
+    )
+  }
+}
+
+# expected frequency of each count value in `k` under the fitted model,
+# summing each cell's probability of that count
+expected_frequencies <- function(model_dist, k) {
+  vapply(k, function(kk) sum(model_dist$pmf(kk)), numeric(1))
 }
 
 # randomized quantile residuals (Dunn & Smyth, 1996): uniform draws between
 # the fitted CDF just below and at the observed count, mapped to normal
-quantile_residuals <- function(y, mu, theta = NULL) {
-  cdf <- function(q) {
-    if (is.null(theta)) {
-      stats::ppois(q, mu)
-    } else {
-      stats::pnbinom(q, mu = mu, size = theta)
-    }
-  }
-  u <- stats::runif(length(y), cdf(y - 1), cdf(y))
+quantile_residuals <- function(y, model_dist) {
+  u <- stats::runif(length(y), model_dist$cdf(y - 1), model_dist$cdf(y))
   stats::qnorm(pmin(pmax(u, 1e-12), 1 - 1e-12))
 }
 
 #' Plot goodness-of-fit diagnostics for a risk terrain model
 #'
 #' Draws the two standard visual fit checks for count models from a
-#' [check_fit()] result:
+#' [check_rtm()] result:
 #'
 #' * **Hanging rootogram** (Kleiber & Zeileis, 2016): for each count value
 #'   0, 1, 2, ... the square root of the observed cell frequency hangs as
@@ -197,7 +203,7 @@ quantile_residuals <- function(y, mu, theta = NULL) {
 #'   randomization draws from the RNG; call `set.seed()` first for a
 #'   reproducible figure.
 #'
-#' @param x An `rtm_fit_check` object from [check_fit()].
+#' @param x An `rtm_fit_check` object from [check_rtm()].
 #' @param which Plots to draw: `"rootogram"`, `"qq"`, or both (default;
 #'   drawn side by side).
 #' @param max_count Largest count value shown in the rootogram (default:
@@ -218,12 +224,14 @@ plot.rtm_fit_check <- function(x, which = c("rootogram", "qq"),
     on.exit(graphics::par(op))
   }
 
+  model_dist <- count_distribution(x$mu, x$theta)
+
   if ("rootogram" %in% which) {
     k <- 0:(max_count %||% max(x$counts))
-    obs <- vapply(k, function(kk) sum(x$counts == kk), numeric(1))
-    expd <- expected_frequencies(x$mu, x$theta, k)
-    top <- sqrt(expd)
-    bottom <- top - sqrt(obs)
+    observed_freq <- vapply(k, function(kk) sum(x$counts == kk), numeric(1))
+    expected_freq <- expected_frequencies(model_dist, k)
+    top <- sqrt(expected_freq)
+    bottom <- top - sqrt(observed_freq)
     plot(
       k, top,
       type = "n", xlab = "Count per cell", ylab = "sqrt(frequency)",
@@ -236,7 +244,7 @@ plot.rtm_fit_check <- function(x, which = c("rootogram", "qq"),
   }
 
   if ("qq" %in% which) {
-    r <- sort(quantile_residuals(x$counts, x$mu, x$theta))
+    r <- sort(quantile_residuals(x$counts, model_dist))
     q <- stats::qnorm(stats::ppoints(length(r)))
     plot(
       q, r,
@@ -280,7 +288,7 @@ print.rtm_fit_check <- function(x, ...) {
   tab$p_value <- signif(tab$p_value, 3)
   print(tab, row.names = FALSE)
 
-  flagged <- x$checks$statistic[x$checks$p_value <= 0.05]
+  flagged <- x$checks$statistic[x$checks$p_value <= 1 - x$level]
   if (length(flagged) > 0) {
     cat("\nThe model cannot reproduce: ", paste(flagged, collapse = ", "), ".\n", sep = "")
     if ("zero_share" %in% flagged) {

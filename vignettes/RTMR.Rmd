@@ -189,11 +189,11 @@ plot(val)
 
 ## In-sample goodness of fit
 
-`validate_rtm()` measures *predictive* performance on new events; `check_fit()` asks the complementary in-sample question — does the model describe the data it was fitted to?
+`validate_rtm()` measures *predictive* performance on new events; `check_rtm()` asks the complementary in-sample question — does the model describe the data it was fitted to?
 
 ```{r fit-check}
 set.seed(4)
-cf <- check_fit(fit)
+cf <- check_rtm(fit)
 cf
 ```
 

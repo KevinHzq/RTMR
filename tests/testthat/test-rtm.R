@@ -88,17 +88,11 @@ test_that("plot.rtm maps residuals with NA outside the fitted cells", {
   expect_error(plot(fit, what = "nope"), "arg")
 
   # offset model: zero-denominator cells are NA on the residual map
-  o <- synthetic_offset_data(seed = 7)
-  set.seed(5)
-  fit_off <- rtm(
-    outcome = o$fatal_events,
-    offset = o$all_events,
-    factors = list(bars = o$bars, naloxone = list(data = o$naloxone, type = "protective")),
-    boundary = o$boundary,
-    cell_size = 150,
-    block_length = 300,
-    operation = "proximity",
-    verbose = FALSE
-  )
+  fit_off <- fit_offset_model(synthetic_offset_data(seed = 7), seed = 5)
   expect_silent(plot(fit_off, what = "residual"))
+
+  # a grid that no longer lines up with the model is caught, not recycled
+  broken <- fit
+  broken$grid <- broken$grid[-1, ]
+  expect_error(plot(broken, what = "residual"), "was the object modified")
 })

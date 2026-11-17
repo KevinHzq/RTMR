@@ -63,14 +63,8 @@ moran_rtm <- function(x, type = c("pearson", "deviance"), nsim = 999,
   }
 
   # residuals exist only for the cells that entered the fit
-  fit_cells <- if (isTRUE(x$has_offset)) x$grid$offset_count > 0 else rep(TRUE, nrow(x$grid))
-  e <- as.numeric(stats::residuals(x$best_model, type = type))
-  if (length(e) != sum(fit_cells)) {
-    stop(
-      "model residuals (", length(e), ") do not match the fitted cells (",
-      sum(fit_cells), "); was the object modified?"
-    )
-  }
+  fit_cells <- fitted_cells(x)
+  e <- fitted_residuals(x, type)
 
   # queen contiguity among the fitted cells (self-intersections removed)
   geom <- sf::st_geometry(x$grid)[fit_cells]

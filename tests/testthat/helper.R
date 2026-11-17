@@ -138,3 +138,22 @@ synthetic_offset_data <- function(seed = 7) {
     fatal_events2 = as_sfc(events2[fatal2, , drop = FALSE])
   )
 }
+
+# case-fatality rate model on synthetic_offset_data(): bars drive event
+# volume, naloxone is the protective factor
+fit_offset_model <- function(d, seed = 3) {
+  set.seed(seed)
+  rtm(
+    outcome = d$fatal_events,
+    offset = d$all_events,
+    factors = list(
+      bars = d$bars,
+      naloxone = list(data = d$naloxone, type = "protective")
+    ),
+    boundary = d$boundary,
+    cell_size = 150,
+    block_length = 300,
+    operation = "proximity",
+    verbose = FALSE
+  )
+}
