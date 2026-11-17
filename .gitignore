@@ -13,3 +13,7 @@ RTM_doc/
 
 # stray knit output
 figure/
+
+# manuscript draft and raw BC Housing shelter downloads - keep local only
+manuscript/
+bc_housing_shelters_*

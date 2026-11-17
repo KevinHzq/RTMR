@@ -7,3 +7,5 @@
 ^Meta$
 ^\.github$
 ^figure$
+^manuscript$
+^bc_housing_shelters_.*$
