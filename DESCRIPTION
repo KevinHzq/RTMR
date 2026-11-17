@@ -25,7 +25,9 @@ Imports:
     sf,
     stats
 Suggests:
+    duckdb,
     knitr,
+    osmdata,
     rmarkdown,
     sandwich,
     terra,

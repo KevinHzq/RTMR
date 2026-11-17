@@ -1,0 +1,250 @@
+---
+title: "Sourcing risk factors from OpenStreetMap and Overture Maps"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Sourcing risk factors from OpenStreetMap and Overture Maps}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+RTMR deliberately has no opinion about where risk factor layers come from: `rtm()` and `operationalize()` accept any sf layer in a projected CRS. But *someone* has to produce those layers, and for built-environment features the two leading open sources are **OpenStreetMap** (OSM) and **Overture Maps**. This vignette walks through extracting the same set of factors from both for a real study area — Nanaimo, British Columbia, with factors chosen for an overdose application (pharmacies, alcohol outlets, shelters, transit stops) — operationalizing both versions, and comparing what the model would actually see from each source.
+
+A sourcing hierarchy worth stating up front:
+
+1. **Authoritative first.** Anything regulated has an administrative register that is complete by construction: liquor licenses, pharmacy licenses (in BC, the College of Pharmacists register), schools, parks from municipal open data portals, transit stops from the agency's GTFS feed (the tidytransit package reads these directly). Use these when they exist for your study area and period.
+2. **Crowdsourced/composite for the rest.** OSM and Overture fill in factor types with no register (convenience stores, fast food, ATMs) and study areas without good open data portals — and they do it with one reproducible script instead of per-city scavenging.
+3. **Whatever you use, report a completeness check** (see the comparison below).
+
+The extraction code in this vignette is shown but not evaluated — it needs network access and the osmdata and duckdb packages. Its output is cached in a small snapshot shipped with the package source (`vignettes/nanaimo_poi.rds`), which the live chunks below load, so everything from `create_grid()` onward runs on the real data.
+
+## OpenStreetMap via osmdata
+
+OSM is a crowdsourced geographic database with a free-form tagging scheme. The osmdata package translates tag queries into Overpass API calls and returns sf objects. The tags for our factors:
+
+| Factor | OSM tags |
+|---|---|
+| Pharmacies | `amenity=pharmacy` |
+| Alcohol outlets | `amenity=bar`, `amenity=pub`, `amenity=nightclub`, `shop=alcohol` |
+| Shelters | `social_facility=shelter` |
+| Bus stops | `highway=bus_stop` |
+
+Two practicalities matter more than the query itself. First, the same kind of place is mapped inconsistently as a *node* (point) or as a *building polygon*, so a robust extraction takes both and reduces polygons to centroids; a snap-to-grid dedupe then removes places mapped as both. Second, everything arrives in WGS84 (EPSG:4326) — transform to a projected CRS before any RTMR function touches it, since spatial influences are distances in CRS units. We use BC Albers (EPSG:3005) throughout.
+
+```{r osm-extract, eval = FALSE}
+library(sf)
+library(osmdata)
+
+# Study area: Nanaimo's administrative boundary, from OSM itself.
+# (For BC work, boundaries from the bcmaps package or the BC Data
+# Catalogue are the authoritative alternative.)
+bnd <- opq("Nanaimo, British Columbia, Canada") |>
+  add_osm_feature(key = "boundary", value = "administrative") |>
+  add_osm_feature(key = "admin_level", value = "8") |>
+  osmdata_sf()
+mp <- bnd$osm_multipolygons
+boundary <- st_transform(st_geometry(mp[which(mp$name == "Nanaimo")[1], ]), 3005)
+
+# Query window: buffer beyond the boundary so features just outside it
+# still exert influence on edge cells (see "Coverage" in vignette("RTMR"))
+bb <- st_bbox(st_transform(st_buffer(boundary, 1000), 4326))
+
+poi_query <- function(key, value) {
+  res <- opq(bb) |>
+    add_osm_feature(key = key, value = value) |>
+    osmdata_sf()
+  # CAUTION: osm_points includes the untagged *vertex nodes* of matched
+  # polygons; keeping them would inflate the layer several-fold. Keep only
+  # nodes that carry the queried tag themselves.
+  pts <- res$osm_points
+  pts <- if (!is.null(pts) && key %in% names(pts)) {
+    st_geometry(pts[!is.na(pts[[key]]), ])
+  } else st_sfc(crs = 4326)
+  if (!is.null(res$osm_polygons) && nrow(res$osm_polygons) > 0) {
+    pts <- c(pts, st_centroid(st_geometry(res$osm_polygons)))
+  }
+  pts <- st_transform(pts, 3005)
+  # drop node/polygon double-mappings of the same place (within ~10 m)
+  key10 <- apply(round(st_coordinates(pts) / 10), 1, paste, collapse = "_")
+  pts[!duplicated(key10)]
+}
+
+pharmacy <- poi_query("amenity", "pharmacy")
+alcohol  <- c(
+  poi_query("amenity", c("bar", "pub", "nightclub")),
+  poi_query("shop", "alcohol")
+)
+shelter  <- poi_query("social_facility", "shelter")
+busstop  <- poi_query("highway", "bus_stop")
+```
+
+The default Overpass endpoint is shared and often rate-limited; if queries stall, `set_overpass_url()` switches to a mirror.
+
+For study areas larger than one municipality, live Overpass queries become slow and rate-limited; the osmextract package, which downloads whole-region `.pbf` extracts from Geofabrik and filters locally, is the reproducible choice at that scale. Geofabrik also serves *dated* extracts — important when your outcome data are from an earlier period (see the caveats below).
+
+## Overture Maps via DuckDB
+
+Overture is an open composite dataset (Linux Foundation; built from OSM, Meta's places data, and other sources) distributed as cloud-hosted GeoParquet. Its *places* theme is substantially more complete for commercial POIs than raw OSM in most areas, uses a fixed category taxonomy instead of free-form tags, and attaches a `confidence` score to every place. There is no API to be rate-limited by: DuckDB reads the Parquet files straight from the public bucket, fetching only the bytes the bounding-box filter needs.
+
+```{r overture-extract, eval = FALSE}
+library(duckdb)
+
+con <- dbConnect(duckdb())
+dbExecute(con, "INSTALL httpfs; LOAD httpfs; INSTALL spatial; LOAD spatial;")
+dbExecute(con, "SET s3_region = 'us-west-2';")
+
+# Releases are versioned by date; pin one for reproducibility
+release <- "2026-06-17.0"
+places <- sprintf(
+  "s3://overturemaps-us-west-2/release/%s/theme=places/type=place/*", release
+)
+
+poi <- dbGetQuery(con, sprintf("
+  SELECT id,
+         names.primary   AS name,
+         categories.primary AS category,
+         confidence,
+         ST_X(geometry) AS lon, ST_Y(geometry) AS lat
+  FROM read_parquet('%s', hive_partitioning = 1)
+  WHERE bbox.xmin BETWEEN %f AND %f
+    AND bbox.ymin BETWEEN %f AND %f
+", places, bb["xmin"], bb["xmax"], bb["ymin"], bb["ymax"]))
+dbDisconnect(con, shutdown = TRUE)
+
+poi <- st_as_sf(poi, coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(3005)
+poi <- poi[poi$confidence >= 0.5, ]  # drop low-confidence places
+
+cats <- list(
+  pharmacy = "pharmacy",
+  alcohol  = c("bar", "pub", "night_club", "lounge", "sports_bar",
+               "gastropub", "wine_bar", "hookah_bar", "cocktail_bar",
+               "liquor_store", "beer_and_wine_store"),
+  shelter  = "homeless_shelter",
+  busstop  = c("bus_station", "bus_stop")
+)
+overture <- lapply(cats, \(cc) st_geometry(poi[poi$category %in% cc, ]))
+```
+
+Note the taxonomy-alignment step: "alcohol outlets" is *your* construct, and each source decomposes it differently (OSM: three amenity values plus a shop value; Overture: a dozen category labels). Write the mapping down — it is a genuine analytic decision, on par with choosing `block_length`.
+
+The `confidence >= 0.5` filter is Overture's own advice for general use; it trades completeness against precision, and for a risk factor layer you should check both directions (spot-check kept places against reality, and look at what the filter dropped).
+
+## The cached snapshot
+
+The snapshot holds the boundary and the four factor layers from each source, extracted with exactly the code above:
+
+```{r load, message = FALSE, warning = FALSE}
+library(RTMR)
+library(sf)
+
+nanaimo <- readRDS("nanaimo_poi.rds")
+str(nanaimo$meta)
+
+data.frame(
+  osm      = sapply(nanaimo$osm, length),
+  overture = sapply(nanaimo$overture, length)
+)
+```
+
+The count table is itself the first diagnostic, and in Nanaimo it is blunt: **each source dominates a different factor type**. Overture's commercial feed finds roughly twice the pharmacies and half again the alcohol outlets that OSM mappers tagged (some of that surplus is real coverage, some is duplicates and closed businesses — spot-check before trusting either direction). For bus stops the situation reverses completely: transit stops are infrastructure, not businesses, so OSM carries hundreds while Overture's places theme has a couple of station-level entries (the authoritative source is the transit agency's GTFS feed — the tidytransit package reads those directly). And shelters exist in Overture but are entirely absent from OSM here — a three-feature layer no model can recover from a source that didn't record it. No single source wins; a per-factor choice, documented, is the defensible approach.
+
+```{r map, fig.height = 6}
+grid <- create_grid(nanaimo$boundary, cellsize = 200)
+
+plot(st_geometry(grid), border = grey(0.9))
+plot(nanaimo$boundary, add = TRUE)
+plot(nanaimo$osm$alcohol, add = TRUE, pch = 1, col = "#0072B2")
+plot(nanaimo$overture$alcohol, add = TRUE, pch = 3, col = "#D55E00")
+legend("topleft", pch = c(1, 3), col = c("#0072B2", "#D55E00"),
+       legend = c("OSM", "Overture"), title = "Alcohol outlets", bty = "n")
+```
+
+A 200 m cell grid over the municipality gives `r nrow(create_grid(nanaimo$boundary, cellsize = 200))` cells. (Nanaimo's boundary includes harbour water; in a real analysis, pass a water-body layer as `exclude` to drop those structural-zero cells — see `vignette("RTMR")`.)
+
+## What the model would see: operationalizing both versions
+
+Counts of raw points overstate the practical difference between sources, because `operationalize()` reduces each layer to binary exposure surfaces — a cell within 400 m of *nine* pharmacies and a cell within 400 m of *one* are identical. The question that matters is: **do the two sources produce the same exposure variables?**
+
+One factor cannot even be asked that question. OSM has no shelters here, and `operationalize()` refuses an empty layer rather than silently returning an all-unexposed variable:
+
+```{r empty-layer, error = TRUE}
+operationalize(nanaimo$osm$shelter, grid, name = "shelter", block_length = 200)
+```
+
+That error is doing epidemiology for you: an all-zero exposure from a source that simply didn't record the feature is misclassification, not absence of effect. We proceed with the three factors both sources carry:
+
+```{r operationalize}
+op_source <- function(layers, grid) {
+  vars <- mapply(
+    function(pt, nm) operationalize(
+      pt, grid, name = nm,
+      block_length = 200, max_blocks = 3,
+      operation = "proximity"
+    ),
+    layers, names(layers),
+    SIMPLIFY = FALSE
+  )
+  do.call(cbind, unname(vars))
+}
+
+shared <- c("pharmacy", "alcohol", "busstop")
+X_osm <- op_source(nanaimo$osm[shared], grid)
+X_ov  <- op_source(nanaimo$overture[shared], grid)
+dim(X_osm)
+colnames(X_osm)
+```
+
+Each factor became three candidate proximity variables (200, 400, 600 m — a 200 m block length, three whole blocks). Now compare the exposure surfaces cell by cell. Two summaries are useful: the share of cells exposed under each source, and the Jaccard similarity of the exposed sets (intersection over union — 1 means the sources flag identical cells):
+
+```{r agreement}
+jaccard <- function(a, b) sum(a & b) / sum(a | b)
+
+comparison <- data.frame(
+  variable     = colnames(X_osm),
+  exposed_osm  = round(colMeans(X_osm), 3),
+  exposed_ov   = round(colMeans(X_ov), 3),
+  jaccard      = round(mapply(jaccard, as.data.frame(X_osm), as.data.frame(X_ov)), 3),
+  row.names    = NULL
+)
+comparison
+```
+
+Two patterns to expect (and check in your own study area). Within a factor, agreement tends to improve with distance — a 600 m buffer forgives positional and completeness disagreement that a 200 m buffer punishes. Across factors, agreement tracks how completely each source covers the type: where one source is nearly empty (bus stops in Overture), the Jaccard collapses toward the ratio of the two exposed shares. The modeling consequence is direct — **source disagreement is largest exactly at the short spatial influences where RTM findings are most actionable**, so completeness matters most when the selected influence is short.
+
+```{r agreement-map, fig.height = 6}
+v <- "alcohol_prox_400"
+disagree <- X_osm[, v] != X_ov[, v]
+plot(st_geometry(grid), border = NA,
+     col = ifelse(disagree, "#D55E00",
+                  ifelse(X_osm[, v] == 1, "#0072B2", grey(0.93))))
+plot(nanaimo$boundary, add = TRUE)
+legend("topleft", fill = c("#0072B2", "#D55E00", grey(0.93)), bty = "n",
+       legend = c("exposed (both sources)", "sources disagree", "unexposed"),
+       title = v)
+```
+
+For a sensitivity analysis in a real study, fit the full `rtm()` pipeline once per source and compare the selected factors, spatial influences, and RRVs — the same pattern as the smoothed-offset sensitivity analysis in `vignette("RTMR")`. If a factor is selected from one source and not the other, its evidence is as fragile as the layer it came from.
+
+## Caveats
+
+-   **Completeness is uneven and unmeasured.** OSM coverage depends on local mapper activity; Overture's on its commercial feeds. Neither ships an error bar. Missing features misclassify exposed cells as unexposed, which (as nondifferential misclassification of a binary exposure, here at the areal level) usually attenuates RRVs — but can distort spatial-influence *selection* in either direction. Validate at least one factor against an authoritative count.
+-   **Temporal alignment.** A live extraction reflects *today's* environment. If your outcome events are from, say, 2019–2021, extract OSM as of that period (Geofabrik's dated extracts, or the ohsome API for full history). Overture has dated releases but its archive only reaches back to 2023, and the underlying commercial feeds are current-state — a real limitation for retrospective designs.
+-   **Transit stops:** use the agency GTFS feed (tidytransit), not a places database. In BC, all BC Transit and TransLink feeds are public.
+-   **Positional accuracy.** Both sources place POIs at rooftop or entrance points, sometimes geocoded to parcel centroids. At `cell_size` 200 m this rarely matters; at 50 m it can.
+-   **Licensing and attribution.** OSM is ODbL: attribute "© OpenStreetMap contributors" and note that derived databases inherit share-alike obligations. Overture's places theme is CDLA Permissive 2.0. Both are fine for academic publication; cite the release/extract date either way.
+-   **Reproducibility.** Pin the Overture release string and record the OSM extraction date (or use a dated extract). A cached snapshot committed alongside the analysis — exactly what this vignette does — is the simplest way to make the whole pipeline rerunnable.
+
+## References
+
+-   Barrington-Leigh, C., & Millard-Ball, A. (2017). The world's user-generated road map is more than 80% complete. *PLoS ONE*, 12(8), e0180698.
+-   Carter, J. G., Mohler, G., & Ray, B. (2019). Spatial concentration of opioid overdose deaths in Indianapolis: An application of the law of crime concentration at place to a public health epidemic. *Journal of Contemporary Criminal Justice*, 35(2), 161–185.
+-   Overture Maps Foundation (2026). *Overture Maps schema reference: places theme*. https://docs.overturemaps.org
